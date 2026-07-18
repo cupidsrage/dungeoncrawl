@@ -57,6 +57,10 @@
   .slot .nm{font-size:9px;text-align:center;padding:0 3px;line-height:1.1;color:var(--ink)}
   .slot .cdfill{position:absolute;inset:0;background:rgba(0,0,0,.6);transform-origin:bottom;pointer-events:none}
   #log{position:absolute;left:14px;bottom:80px;width:230px;font-size:11px;pointer-events:none;color:var(--dim)}
+  #statusChips{position:absolute;top:56px;left:14px;display:flex;flex-wrap:wrap;gap:5px;max-width:60vw;pointer-events:none}
+  #statusChips .chip{font-size:10px;padding:2px 7px;border:1px solid var(--line);border-radius:20px;
+    background:rgba(12,15,24,.82);letter-spacing:.03em}
+  #statusChips .chip em{opacity:.6;font-style:normal;font-size:9px}
   #log div{opacity:.9;margin-bottom:2px;text-shadow:0 1px 2px #000}
   #hint{position:absolute;right:14px;bottom:14px;font-size:11px;color:var(--dim);text-align:right;line-height:1.6}
 
@@ -120,6 +124,7 @@
       <div class="stat" id="goldStat">◈ 0</div>
       <div class="floorTag" id="floorTag">FLOOR 1</div>
     </div>
+    <div id="statusChips"></div>
     <div id="abilities"></div>
     <div id="log"></div>
     <div id="hint">WASD / arrows — move<br>J / click — attack<br>K — dash · I — inventory<br>step on ▼ to descend</div>

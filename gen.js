@@ -124,9 +124,9 @@ const MONSTER_ARCHETYPES = [
   { key: 'grub', name: 'Cave Grub', glyph: 'g', hpMul: 0.8, dmgMul: 0.7, spd: 0.95, color: '#8fae6b', behavior: 'chaser' },
   { key: 'skitter', name: 'Skitterling', glyph: 's', hpMul: 0.55, dmgMul: 0.9, spd: 1.55, color: '#c9a24b', behavior: 'charger' },
   { key: 'brute', name: 'Stone Brute', glyph: 'B', hpMul: 2.0, dmgMul: 1.5, spd: 0.7, color: '#9a8f80', behavior: 'chaser', special: 'slam' },
-  { key: 'shade', name: 'Hollow Shade', glyph: 'h', hpMul: 0.85, dmgMul: 1.0, spd: 1.15, color: '#7d6bad', behavior: 'caster', proj: 'void' },
-  { key: 'spitter', name: 'Blight Spitter', glyph: 'y', hpMul: 0.9, dmgMul: 1.0, spd: 0.9, color: '#7bbf5a', behavior: 'bomber', proj: 'poison' },
-  { key: 'warden', name: 'Rift Warden', glyph: 'W', hpMul: 1.4, dmgMul: 1.2, spd: 1.05, color: '#c0596b', behavior: 'caster', proj: 'fire', special: 'volley' },
+  { key: 'shade', name: 'Hollow Shade', glyph: 'h', hpMul: 1.1, dmgMul: 1.0, spd: 1.15, color: '#7d6bad', behavior: 'caster', proj: 'void' },
+  { key: 'spitter', name: 'Blight Spitter', glyph: 'y', hpMul: 1.15, dmgMul: 1.0, spd: 0.9, color: '#7bbf5a', behavior: 'bomber', proj: 'poison' },
+  { key: 'warden', name: 'Rift Warden', glyph: 'W', hpMul: 1.6, dmgMul: 1.2, spd: 1.05, color: '#c0596b', behavior: 'caster', proj: 'fire', special: 'volley' },
 ];
 
 export function generateMonsters(seed, floor, rooms) {
@@ -156,6 +156,16 @@ export function generateMonsters(seed, floor, rooms) {
         behavior: arch.behavior, proj: arch.proj || null, special: arch.special || null,
       });
     }
+  }
+  // Guarantee a ranged presence: if a populated floor rolled all-melee, convert
+  // one non-boss mob into a Hollow Shade so every floor has a shooting threat.
+  if (mobs.length >= 2 && !mobs.some((m) => m.proj)) {
+    const victim = mobs.find((m) => m.behavior === 'chaser') || mobs[mobs.length - 1];
+    Object.assign(victim, {
+      key: 'shade', name: 'Hollow Shade', glyph: 'h', color: '#7d6bad',
+      behavior: 'caster', proj: 'void', special: null, spd: 1.15,
+      hp: Math.round(victim.hp * 0.75), maxHp: Math.round(victim.maxHp * 0.75),
+    });
   }
   // Boss on floors divisible by 5.
   if (floor % 5 === 0) {
@@ -306,14 +316,36 @@ const ABILITY_SHAPES = [
   { key: 'chain', name: 'Chain', desc: 'a bolt that jumps between foes', w: 2, range: 6, cd: 1.6, chain: 3 },
 ];
 const DMG_TYPES = [
-  { key: 'phys', name: 'Physical', color: '#e8e2d0' },
-  { key: 'fire', name: 'Fire', color: '#ff7a3c', dot: 'burn' },
-  { key: 'cold', name: 'Cold', color: '#63c6ff', slow: true },
-  { key: 'lightning', name: 'Lightning', color: '#ffe14a' },
-  { key: 'void', name: 'Void', color: '#b46bff', lifesteal: 0.1 },
+  { key: 'phys', name: 'Physical', color: '#e8e2d0', onHit: null },
+  { key: 'fire', name: 'Fire', color: '#ff7a3c', onHit: { status: 'burn', chance: 1.0, dur: 2.5 } },
+  { key: 'cold', name: 'Cold', color: '#63c6ff', onHit: { status: 'chill', chance: 1.0, dur: 1.8, freezeAt: 3 } },
+  { key: 'lightning', name: 'Lightning', color: '#ffe14a', onHit: { status: 'stun', chance: 0.22, dur: 0.7 } },
+  { key: 'void', name: 'Void', color: '#b46bff', lifesteal: 0.1, onHit: { status: 'vulnerable', chance: 0.5, dur: 3 } },
+  { key: 'poison', name: 'Poison', color: '#8fd14b', onHit: { status: 'poison', chance: 1.0, dur: 3 } },
 ];
+
+// Status effect definitions — the single source of truth for both player and mobs.
+// kind: 'debuff' | 'buff'. Fields consumed by the client's status engine.
+export const STATUS = {
+  burn:       { kind: 'debuff', name: 'Burn', color: '#ff7a3c', dot: 0.14, stacks: true, icon: '🔥' },
+  poison:     { kind: 'debuff', name: 'Poison', color: '#8fd14b', dot: 0.11, stacks: true, icon: '☠' },
+  slow:       { kind: 'debuff', name: 'Slow', color: '#7fb0d0', moveMul: 0.5, icon: '🐌' },
+  chill:      { kind: 'debuff', name: 'Chill', color: '#63c6ff', moveMul: 0.6, buildsTo: 'freeze', icon: '❄' },
+  freeze:     { kind: 'debuff', name: 'Freeze', color: '#a8e6ff', root: true, silence: true, icon: '🧊' },
+  stun:       { kind: 'debuff', name: 'Stun', color: '#ffe14a', root: true, silence: true, icon: '💫' },
+  weaken:     { kind: 'debuff', name: 'Weaken', color: '#c08a8a', dmgDealtMul: 0.6, icon: '▼' },
+  vulnerable: { kind: 'debuff', name: 'Vulnerable', color: '#ff8ab0', dmgTakenMul: 1.35, icon: '◎' },
+  // buffs (mostly player, from abilities/trinkets)
+  haste:      { kind: 'buff', name: 'Haste', color: '#6fe3c4', moveMul: 1.5, icon: '»' },
+  rage:       { kind: 'buff', name: 'Rage', color: '#ff5d6c', dmgDealtMul: 1.5, icon: '⚔' },
+  fortify:    { kind: 'buff', name: 'Fortify', color: '#c9a24b', dmgTakenMul: 0.6, icon: '🛡' },
+  regen:      { kind: 'buff', name: 'Regen', color: '#5bcf6a', heal: 4, icon: '✚' },
+  shield:     { kind: 'buff', name: 'Shield', color: '#8fd1ff', absorb: true, icon: '◈' },
+};
 const ABILITY_ADJ = ['Searing', 'Riven', 'Umbral', 'Tempest', 'Gloom', 'Radiant', 'Wither', 'Fractal'];
 const ABILITY_NOUN = { bolt: 'Bolt', nova: 'Burst', cleave: 'Sweep', lance: 'Lance', volley: 'Barrage', chain: 'Arc' };
+// Some abilities grant a self-buff on cast (rarer, and better on higher rarities).
+const SELF_BUFFS = ['haste', 'rage', 'fortify', 'shield', 'regen'];
 
 export function generateAbility(seed, salt, ilvl, rarity, base) {
   const rng = makeRNG(subSeed(seed, `abil:${salt}`));
@@ -323,19 +355,36 @@ export function generateAbility(seed, salt, ilvl, rarity, base) {
   const power = Math.round(rng.int(6, 12) * scale * rarity.mul);
   const cd = Math.max(0.4, +(shape.cd * rng.float(0.85, 1.1) / rarity.mul).toFixed(2));
   const name = `${rng.pick(ABILITY_ADJ)} ${ABILITY_NOUN[shape.key]}`;
+
+  // On-hit status from the damage type (guaranteed for elemental, chance for lightning/void).
+  const onHit = dtype.onHit ? { ...dtype.onHit } : null;
+
+  // Self-buff chance scales with rarity: common ~0, legendary ~55%.
+  const rarityRank = ['common', 'uncommon', 'rare', 'epic', 'legendary'].indexOf(rarity.key);
+  let selfBuff = null;
+  if (rng.chance(0.1 + rarityRank * 0.11)) {
+    const b = rng.pick(SELF_BUFFS);
+    selfBuff = { status: b, dur: +(2 + rarityRank * 0.8).toFixed(1) };
+  }
+
   const parts = [`Unleash ${shape.desc}`, `dealing ${power} ${dtype.name} damage`];
   if (shape.multi) parts.push(`(${shape.multi} projectiles)`);
   if (shape.chain) parts.push(`chaining to ${shape.chain} enemies`);
   if (shape.pierce) parts.push('piercing all in its path');
-  if (dtype.dot) parts.push('and applying burn');
-  if (dtype.slow) parts.push('and chilling foes');
+  if (onHit) {
+    const s = STATUS[onHit.status];
+    const chanceTxt = onHit.chance >= 1 ? 'inflicting' : `with a ${Math.round(onHit.chance * 100)}% chance to inflict`;
+    parts.push(`${chanceTxt} ${s.name}`);
+  }
   if (dtype.lifesteal) parts.push('healing you for part of the damage');
+  if (selfBuff) parts.push(`and granting you ${STATUS[selfBuff.status].name} for ${selfBuff.dur}s`);
+
   return {
     name, shape: shape.key, shapeName: shape.name, range: shape.range,
     dmgType: dtype.key, dmgTypeName: dtype.name, color: dtype.color,
     power, cd, aoe: !!shape.aoe, pierce: !!shape.pierce, multi: shape.multi || 1,
-    chain: shape.chain || 0, dot: dtype.dot || null, slow: !!dtype.slow,
-    lifesteal: dtype.lifesteal || 0,
+    chain: shape.chain || 0, lifesteal: dtype.lifesteal || 0,
+    onHit, selfBuff,
     desc: parts.join(' ') + '.',
   };
 }

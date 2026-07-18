@@ -1,7 +1,61 @@
 import {
   makeRNG, hashSeed, subSeed, generateDungeon, generateMonsters, generateItem,
-  starterWeapon, MAP_W, MAP_H, T,
+  starterWeapon, MAP_W, MAP_H, T, STATUS,
 } from './gen.js';
+
+// ---------- STATUS ENGINE ----------
+// Any entity (player or monster) carries `.fx_status = {}` — a map of
+// statusKey -> { t: remaining, mag: magnitude, stacks: n }. These helpers
+// apply, tick, and query effects uniformly for both sides.
+function applyStatus(ent, key, dur, mag = 1) {
+  const def = STATUS[key];
+  if (!def) return;
+  ent.fx_status = ent.fx_status || {};
+  const cur = ent.fx_status[key];
+  if (cur && def.stacks) { cur.t = Math.max(cur.t, dur); cur.stacks = Math.min(5, (cur.stacks || 1) + 1); cur.mag = mag; }
+  else if (cur) { cur.t = Math.max(cur.t, dur); cur.mag = Math.max(cur.mag, mag); }
+  else ent.fx_status[key] = { t: dur, mag, stacks: 1 };
+
+  // chill building to freeze: enough chill stacks locks the target down
+  if (key === 'chill') {
+    const c = ent.fx_status.chill;
+    if (c.stacks >= (def.buildsTo && 3)) { applyStatus(ent, 'freeze', 1.2); delete ent.fx_status.chill; }
+  }
+}
+function hasStatus(ent, key) { return ent.fx_status && ent.fx_status[key] && ent.fx_status[key].t > 0; }
+function isRooted(ent) { // can't move
+  if (!ent.fx_status) return false;
+  return Object.keys(ent.fx_status).some((k) => ent.fx_status[k].t > 0 && STATUS[k].root);
+}
+function isSilenced(ent) { // can't act/attack
+  if (!ent.fx_status) return false;
+  return Object.keys(ent.fx_status).some((k) => ent.fx_status[k].t > 0 && STATUS[k].silence);
+}
+// Aggregate a multiplicative modifier across active statuses (moveMul, dmgDealtMul, dmgTakenMul).
+function statusMul(ent, field) {
+  if (!ent.fx_status) return 1;
+  let m = 1;
+  for (const k in ent.fx_status) {
+    if (ent.fx_status[k].t > 0 && STATUS[k][field] != null) m *= STATUS[k][field];
+  }
+  return m;
+}
+// Tick all statuses on an entity: countdown, DoT, heal. `onDot` gets (dmg) so
+// player and monster can route damage through their own paths.
+function tickStatus(ent, dt, onDot, onHeal) {
+  if (!ent.fx_status) return;
+  for (const k in ent.fx_status) {
+    const st = ent.fx_status[k], def = STATUS[k];
+    st.t -= dt;
+    if (st.t <= 0) { delete ent.fx_status[k]; continue; }
+    if (def.dot) { st.tick = (st.tick || 0) - dt; if (st.tick <= 0) { onDot(Math.max(1, def.dot * st.mag * (st.stacks || 1)), def.color); st.tick = 0.5; } }
+    if (def.heal) { st.tick = (st.tick || 0) - dt; if (st.tick <= 0) { onHeal(def.heal * st.mag); st.tick = 0.5; } }
+  }
+}
+function activeStatusList(ent) {
+  if (!ent.fx_status) return [];
+  return Object.keys(ent.fx_status).filter((k) => ent.fx_status[k].t > 0).map((k) => ({ key: k, ...STATUS[k], ...ent.fx_status[k] }));
+}
 
 // ---------- constants ----------
 const TILE = 20;              // world units per tile
@@ -141,13 +195,27 @@ async function loadRun() {
 }
 
 // ---------- input ----------
+// True when the user is typing into a text field — so game controls don't
+// swallow keystrokes meant for the seed/name inputs.
+function isTyping() {
+  const el = document.activeElement;
+  return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+}
 window.addEventListener('keydown', (e) => {
+  if (isTyping()) return;               // let the input receive the key normally
   const k = e.key.toLowerCase();
   keys[k] = true;
   if (k === 'i') { e.preventDefault(); toggleInv(); }
   if (['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright','j','k',' '].includes(k)) e.preventDefault();
 });
-window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+window.addEventListener('keyup', (e) => { if (isTyping()) return; keys[e.key.toLowerCase()] = false; });
+// When a text field gains focus, wipe any held-key state so movement doesn't
+// stay "stuck on" after the player clicks back into the game.
+document.addEventListener('focusin', (e) => {
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
+    for (const key in keys) keys[key] = false;
+  }
+});
 
 cv.addEventListener('mousemove', (e) => {
   const r = cv.getBoundingClientRect();
@@ -193,6 +261,7 @@ function fireAbility(idx, tx, ty) {
   const p = G.player;
   const ab = p.abilities[idx];
   if (!ab || ab.cdLeft > 0) return;
+  if (isSilenced(p)) return;                 // frozen/stunned can't cast
   const dx = tx - p.px, dy = ty - p.py;
   const ang = Math.atan2(dy, dx);
   const cd = ab.cd * (1 - p.stats.cdr);
@@ -201,12 +270,11 @@ function fireAbility(idx, tx, ty) {
   const mk = (a) => ({
     x: p.px, y: p.py, vx: Math.cos(a) * 240, vy: Math.sin(a) * 240,
     life: ab.range * TILE / 240, color: ab.color, dmg: dmgBase, dtype: ab.dmgType,
-    pierce: ab.pierce, chain: ab.chain, hitSet: new Set(), dot: ab.dot, slow: ab.slow,
-    lifesteal: ab.lifesteal, r: ab.aoe ? 4 : 4,
+    pierce: ab.pierce, chain: ab.chain, hitSet: new Set(),
+    lifesteal: ab.lifesteal, onHit: ab.onHit, r: 4,
   });
 
   if (ab.aoe && ab.shape === 'nova') {
-    // ring: spawn projectiles in a circle
     for (let i = 0; i < 12; i++) G.projectiles.push(mk((i / 12) * Math.PI * 2));
     G.effects.push({ type: 'ring', x: p.px, y: p.py, r: 0, maxR: ab.range * TILE, life: .35, t: 0, color: ab.color });
   } else if (ab.shape === 'cleave') {
@@ -217,6 +285,8 @@ function fireAbility(idx, tx, ty) {
   } else {
     G.projectiles.push(mk(ang));
   }
+  // self-buff on cast
+  if (ab.selfBuff) { applyStatus(p, ab.selfBuff.status, ab.selfBuff.dur, 1); log(`${STATUS[ab.selfBuff.status].name}!`, STATUS[ab.selfBuff.status].color); }
   screenShake(ab.aoe ? 4 : 2);
 }
 
@@ -238,15 +308,19 @@ function meleeSwing() {
   }
 }
 
-function damageMonster(m, amount, dtype) {
+function damageMonster(m, amount, dtype, onHit = null) {
   const p = G.player;
-  let dmg = amount;
+  let dmg = amount * statusMul(p, 'dmgDealtMul');      // player Weaken/Rage
+  dmg *= statusMul(m, 'dmgTakenMul');                   // target Vulnerable/Fortify
   const crit = G.rng.chance(p.stats.critChance);
   if (crit) dmg = Math.round(dmg * (1.5 + p.stats.critDmg));
+  dmg = Math.round(dmg);
   m.hp -= dmg;
   m.hitFlash = 0.15;
   m.aggro = true;
   if (p.stats.lifesteal > 0) { p.hp = Math.min(p.maxHp, p.hp + dmg * p.stats.lifesteal); }
+  // apply a status the hit carries (from the ability's damage type)
+  if (onHit && G.rng.chance(onHit.chance)) applyStatus(m, onHit.status, onHit.dur, 1);
   spawnDamageNumber(m.fx * TILE + TILE / 2, m.fy * TILE + TILE / 2, dmg, crit, dtype);
   if (m.hp <= 0) killMonster(m);
 }
@@ -268,13 +342,17 @@ function killMonster(m) {
   if (m.boss) { log(`${m.name} falls!`, 'var(--gold)'); screenShake(10); }
 }
 
-function damagePlayer(amount) {
+function damagePlayer(amount, incomingStatus = null) {
   const p = G.player;
   if (p.invuln > 0) return;
   if (G.rng.chance(p.stats.dodge)) { spawnDamageNumber(p.px, p.py, 'dodge', false, 'text'); return; }
-  const reduced = amount * (100 / (100 + p.stats.armor));
-  p.hp -= reduced;
+  // Shield buff absorbs one hit entirely.
+  if (hasStatus(p, 'shield')) { delete p.fx_status.shield; spawnDamageNumber(p.px, p.py, 'block', false, 'text'); p.invuln = 0.3; return; }
+  let dmg = amount * (100 / (100 + p.stats.armor));
+  dmg *= statusMul(p, 'dmgTakenMul');                  // Fortify (down) / Vulnerable (up)
+  p.hp -= dmg;
   p.hitFlash = 0.2; p.invuln = 0.4;
+  if (incomingStatus && G.rng.chance(incomingStatus.chance ?? 1)) applyStatus(p, incomingStatus.status, incomingStatus.dur, 1);
   screenShake(5);
   if (p.hp <= 0) gameOver();
 }
@@ -313,6 +391,14 @@ function moveMob(m, tx, ty, unitsPerSec, dt, sign = 1) {
 }
 
 // Enemy fires a projectile (or spread) at the player.
+// Map each enemy projectile element to the debuff it inflicts on the player.
+const PROJ_STATUS = {
+  fire: { status: 'burn', chance: 1, dur: 2.5 },
+  void: { status: 'weaken', chance: 0.6, dur: 3 },
+  poison: { status: 'poison', chance: 1, dur: 3 },
+  cold: { status: 'chill', chance: 1, dur: 1.8 },
+  lightning: { status: 'stun', chance: 0.25, dur: 0.6 },
+};
 function enemyShoot(m, mx, my, opts = {}) {
   const p = G.player;
   const baseAng = Math.atan2(p.py - my, p.px - mx);
@@ -324,6 +410,7 @@ function enemyShoot(m, mx, my, opts = {}) {
       x: mx, y: my, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
       life: opts.life || 2.2, dmg: Math.round(m.dmg * (opts.dmgMul || 0.9)),
       color, ptype: m.proj, r: 5, arc: opts.arc || false,
+      onHit: PROJ_STATUS[m.proj] || null,
     });
   }
   G.effects.push({ type: 'hit', x: mx, y: my, life: .15, t: 0, color });
@@ -339,10 +426,17 @@ function updateMonsters(dt) {
     if (m.telegraph > 0) m.telegraph -= dt;
     if (m.atkCd > 0) m.atkCd -= dt;
     if (dist < 220) m.aggro = true;
-    const slow = m.slowT > 0 ? 0.55 : 1;
-    const spd = m.spd * MOB_SPD * slow;
 
-    if (m.aggro) {
+    // tick this monster's status effects (burn/poison DoT routes to damageMonster-style HP loss)
+    tickStatus(m, dt,
+      (dmg, color) => { m.hp -= dmg; spawnDamageNumber(mx, my, Math.round(dmg), false, color === '#8fd14b' ? 'poison' : 'fire'); if (m.hp <= 0) killMonster(m); },
+      () => {});
+    if (m.hp <= 0) continue;
+
+    const rooted = isRooted(m), silenced = isSilenced(m);
+    const spd = m.spd * MOB_SPD * statusMul(m, 'moveMul') * (rooted ? 0 : 1);
+
+    if (m.aggro && !rooted) {
       switch (m.behavior) {
         case 'charger': {
           // Skitterling: circle at mid-range, then wind up and dash straight through.
@@ -373,8 +467,8 @@ function updateMonsters(dt) {
           if (dist < ideal - 40) moveMob(m, p.px, p.py, spd, dt, -1);       // retreat
           else if (dist > ideal + 40) moveMob(m, p.px, p.py, spd * 0.9, dt); // close in
           else moveMob(m, p.px + (my - p.py) * 0.3, p.py + (p.px - mx) * 0.3, spd * 0.5, dt); // strafe
-          if (dist < 260 && m.atkCd <= 0 && m.telegraph <= 0) { m.telegraph = 0.35; }
-          if (m.telegraph > 0 && m.telegraph - dt <= 0 && dist < 300) {
+          if (!silenced && dist < 260 && m.atkCd <= 0 && m.telegraph <= 0) { m.telegraph = 0.35; }
+          if (m.telegraph > 0 && m.telegraph - dt <= 0 && dist < 300 && !silenced) {
             if (m.special === 'volley') enemyShoot(m, mx, my, { count: 3, spread: 0.28, speed: 165 });
             else enemyShoot(m, mx, my, { speed: 175 });
             m.atkCd = 1.6 + Math.random() * 0.6;
@@ -385,13 +479,13 @@ function updateMonsters(dt) {
           // Spitter: advance slowly, lob arcing shots at mid range.
           if (dist > 90) moveMob(m, p.px, p.py, spd * 0.75, dt);
           else if (dist < 55) moveMob(m, p.px, p.py, spd * 0.6, dt, -1);
-          if (dist < 240 && m.atkCd <= 0) { enemyShoot(m, mx, my, { speed: 120, arc: true, life: 2.6, dmgMul: 1.1 }); m.atkCd = 1.8; }
+          if (!silenced && dist < 240 && m.atkCd <= 0) { enemyShoot(m, mx, my, { speed: 120, arc: true, life: 2.6, dmgMul: 1.1 }); m.atkCd = 1.8; }
           break;
         }
         case 'boss': {
           // Boss: chases, periodic ranged volleys, occasional big slam telegraph.
           if (dist > 40) moveMob(m, p.px, p.py, spd, dt);
-          if (m.atkCd <= 0) {
+          if (!silenced && m.atkCd <= 0) {
             if (dist < 300) enemyShoot(m, mx, my, { count: 5, spread: 0.32, speed: 160, dmgMul: 0.8 });
             m.atkCd = 2.0;
           }
@@ -400,8 +494,8 @@ function updateMonsters(dt) {
         default: { // chaser (grub, brute)
           if (dist > 6) moveMob(m, p.px, p.py, spd, dt);
           // Brute slam: telegraphed heavy hit with small radius.
-          if (m.special === 'slam' && dist < 46 && m.atkCd <= 0 && m.telegraph <= 0) { m.telegraph = 0.5; m.atkCd = 2.6; }
-          if (m.telegraph > 0 && m.telegraph - dt <= 0 && dist < 60) {
+          if (!silenced && m.special === 'slam' && dist < 46 && m.atkCd <= 0 && m.telegraph <= 0) { m.telegraph = 0.5; m.atkCd = 2.6; }
+          if (m.telegraph > 0 && m.telegraph - dt <= 0 && dist < 60 && !silenced) {
             damagePlayer(Math.round(m.dmg * 1.8));
             G.effects.push({ type: 'ring', x: mx, y: my, r: 0, maxR: 55, life: .3, t: 0, color: '#ff8a5c' });
             screenShake(6);
@@ -419,10 +513,6 @@ function updateMonsters(dt) {
     } else if (dist < 20 && m.boss) {
       if ((m.touchCd = (m.touchCd || 0) - dt) <= 0) { damagePlayer(m.dmg); m.touchCd = 0.6; }
     }
-
-    // status effects
-    if (m.burn > 0) { m.burn -= dt; m.burnTick = (m.burnTick || 0) - dt; if (m.burnTick <= 0) { damageMonster(m, Math.max(1, Math.round(m.burnDmg)), 'fire'); m.burnTick = 0.5; } }
-    if (m.slowT > 0) m.slowT -= dt;
   }
 }
 
@@ -434,20 +524,12 @@ function updateEnemyProjectiles(dt) {
     if (pr.arc) { pr.vx *= 0.985; pr.vy *= 0.985; } // arcing shots decelerate
     if (isWall(Math.floor(pr.x / TILE), Math.floor(pr.y / TILE))) pr.life = 0;
     if (Math.hypot(pr.x - p.px, pr.y - p.py) < 11) {
-      damagePlayer(pr.dmg);
-      if (pr.ptype === 'poison') { p.poisonT = 3; p.poisonDmg = pr.dmg * 0.12; }
-      if (pr.ptype === 'cold') p.chillT = 1.2;
+      damagePlayer(pr.dmg, pr.onHit);
       G.effects.push({ type: 'hit', x: pr.x, y: pr.y, life: .18, t: 0, color: pr.color });
       pr.life = 0;
     }
   }
   G.eproj = G.eproj.filter((x) => x.life > 0);
-  // player damage-over-time from poison
-  if (p.poisonT > 0) {
-    p.poisonT -= dt; p.poisonTick = (p.poisonTick || 0) - dt;
-    if (p.poisonTick <= 0) { p.hp -= Math.max(1, p.poisonDmg); p.poisonTick = 0.5; if (p.hp <= 0) gameOver(); }
-  }
-  if (p.chillT > 0) p.chillT -= dt;
 }
 
 // ---------- projectiles ----------
@@ -461,12 +543,8 @@ function updateProjectiles(dt) {
       const mx = m.fx * TILE + TILE / 2, my = m.fy * TILE + TILE / 2;
       if (Math.hypot(mx - pr.x, my - pr.y) < 12) {
         pr.hitSet.add(m.id);
-        let dmg = pr.dmg;
-        if (m.slowT > 0) dmg = Math.round(dmg * 1.1);
-        damageMonster(m, dmg, pr.dtype);
-        if (pr.dot === 'burn') { m.burn = 2; m.burnDmg = pr.dmg * 0.15; }
-        if (pr.slow) { m.slowT = 1.5; }
-        if (pr.lifesteal) p.hp = Math.min(p.maxHp, p.hp + dmg * pr.lifesteal);
+        damageMonster(m, pr.dmg, pr.dtype, pr.onHit);
+        if (pr.lifesteal) p.hp = Math.min(p.maxHp, p.hp + pr.dmg * pr.lifesteal);
         G.effects.push({ type: 'hit', x: pr.x, y: pr.y, life: .18, t: 0, color: pr.color });
         // chain: retarget to nearest unhit monster
         if (pr.chain > 0) {
@@ -551,7 +629,7 @@ let shake = 0;
 function screenShake(a) { shake = Math.min(12, shake + a); }
 const dmgNumbers = [];
 function spawnDamageNumber(x, y, val, crit, dtype) {
-  const colors = { phys: '#fff', fire: '#ff7a3c', cold: '#63c6ff', lightning: '#ffe14a', void: '#b46bff', text: '#7fe' };
+  const colors = { phys: '#fff', fire: '#ff7a3c', cold: '#63c6ff', lightning: '#ffe14a', void: '#b46bff', poison: '#8fd14b', text: '#7fe' };
   dmgNumbers.push({ x, y, val, crit, life: .8, t: 0, color: colors[dtype] || '#fff' });
 }
 function log(msg, color = 'var(--dim)') {
@@ -569,12 +647,18 @@ function update(dt) {
   if (!G.alive) return;
   // regen
   p.hp = Math.min(p.maxHp, p.hp + p.stats.regen * dt);
+  // tick status effects (burn/poison drain HP; regen buff heals)
+  tickStatus(p, dt,
+    (dmg) => { p.hp -= dmg; if (p.hp <= 0) gameOver(); },
+    (heal) => { p.hp = Math.min(p.maxHp, p.hp + heal); });
   // timers
   if (p.hitFlash > 0) p.hitFlash -= dt;
   if (p.invuln > 0) p.invuln -= dt;
   if (p.dashCd > 0) p.dashCd -= dt;
   if (p.swingCd > 0) p.swingCd -= dt;
   for (const ab of p.abilities) if (ab.cdLeft > 0) ab.cdLeft -= dt;
+
+  const rooted = isRooted(p);   // frozen/stunned: can't move
 
   // movement
   let mx = 0, my = 0;
@@ -584,18 +668,18 @@ function update(dt) {
   if (keys['d'] || keys['arrowright']) mx += 1;
   mx += touchVec.x; my += touchVec.y;
   const mag = Math.hypot(mx, my);
-  if (mag > 0) {
+  if (mag > 0 && !rooted) {
     mx /= mag; my /= mag;
     p.dir = { x: mx, y: my };
-    const chill = p.chillT > 0 ? 0.6 : 1;
-    const speed = 120 * (1 + p.stats.moveSpeed) * (p.dashT > 0 ? 2.4 : 1) * chill;
+    const moveMul = statusMul(p, 'moveMul');   // chill/slow (down) or haste (up)
+    const speed = 120 * (1 + p.stats.moveSpeed) * (p.dashT > 0 ? 2.4 : 1) * moveMul;
     const nx = p.px + mx * speed * dt, ny = p.py + my * speed * dt;
     if (canMove(nx, p.py)) p.px = nx;
     if (canMove(p.px, ny)) p.py = ny;
   }
   if (p.dashT > 0) p.dashT -= dt;
-  // dash
-  if ((keys['k'] || keys[' ']) && p.dashCd <= 0) { p.dashT = 0.16; p.dashCd = 1.2; p.invuln = 0.2; }
+  // dash (blocked while rooted)
+  if ((keys['k'] || keys[' ']) && p.dashCd <= 0 && !rooted) { p.dashT = 0.16; p.dashCd = 1.2; p.invuln = 0.2; }
 
   // attacks
   const aimX = mouse.x - VIEW_TILES_X * TILE / 2 + p.px;
@@ -695,6 +779,16 @@ function draw() {
     ctx.fillText(m.glyph, sx, sy+(m.boss?5:3));
     // hp bar
     if (m.hp < m.maxHp) { ctx.fillStyle='#2a0f16'; ctx.fillRect(sx-size,sy-size-6,size*2,3); ctx.fillStyle='#ff4b5c'; ctx.fillRect(sx-size,sy-size-6,size*2*(m.hp/m.maxHp),3); }
+    // status pips: small colored dots above the health bar
+    const st = activeStatusList(m);
+    if (st.length) {
+      st.slice(0, 4).forEach((s, i) => {
+        ctx.fillStyle = s.color;
+        ctx.beginPath(); ctx.arc(sx - size + 3 + i * 6, sy - size - 11, 2.4, 0, 7); ctx.fill();
+      });
+    }
+    // frozen overlay tint
+    if (hasStatus(m, 'freeze')) { ctx.fillStyle = 'rgba(120,210,255,.35)'; ctx.beginPath(); ctx.arc(sx, sy, size + 1, 0, 7); ctx.fill(); }
   }
 
   // projectiles (player)
@@ -760,6 +854,12 @@ function updateHUD() {
   document.getElementById('xpBar').style.width = (p.xp / p.xpNext * 100) + '%';
   document.getElementById('goldStat').textContent = `◈ ${G.gold}`;
   document.getElementById('floorTag').textContent = `FLOOR ${G.floor}`;
+  // player status chips
+  const sc = document.getElementById('statusChips');
+  if (sc) {
+    const st = activeStatusList(p);
+    sc.innerHTML = st.map((s) => `<span class="chip" style="border-color:${s.color};color:${s.color}">${s.icon} ${s.name}${s.stacks > 1 ? '×' + s.stacks : ''} <em>${s.t.toFixed(0)}s</em></span>`).join('');
+  }
   // ability cooldowns
   p.abilities.forEach((ab, i) => {
     const el = document.getElementById('cd' + i);
