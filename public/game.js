@@ -1101,7 +1101,8 @@ function renderInv() {
   for (const [slot, label] of SLOT_ORDER) {
     const it = p.equip[slot];
     const row = document.createElement('div'); row.className = 'equip-slot';
-    row.innerHTML = `<span class="slotname">${label}</span><span class="iname" style="color:${it?it.rarityColor:'var(--dim)'}">${it?it.name:'— empty —'}</span>`;
+    const emptyText = slot === 'weapon2' ? '— empty (equip a 2nd weapon for a 2nd ability) —' : '— empty —';
+    row.innerHTML = `<span class="slotname">${label}</span><span class="iname" style="color:${it?it.rarityColor:'var(--dim)'};font-size:${it?'13px':'11px'}">${it?it.name:emptyText}</span>`;
     if (it) { attachTip(row, it); row.onclick = () => { unequip(slot); renderInv(); }; }
     eqList.appendChild(row);
   }
@@ -1140,7 +1141,17 @@ function renderInv() {
 
 function equipItem(it) {
   const p = G.player;
-  const slot = it.slot === 'weapon' ? (p.equip.weapon && !p.equip.weapon2 && it !== p.equip.weapon ? 'weapon' : 'weapon') : it.slot;
+  let slot;
+  if (it.slot === 'weapon') {
+    // First weapon -> main hand. If main is full and off-hand is empty, a second
+    // weapon goes to the off-hand (granting a second ability). Otherwise it
+    // replaces the main-hand weapon.
+    if (!p.equip.weapon) slot = 'weapon';
+    else if (!p.equip.weapon2) slot = 'weapon2';
+    else slot = 'weapon';
+  } else {
+    slot = it.slot;
+  }
   // remove from bag
   p.bag = p.bag.filter((x) => x !== it);
   const prev = p.equip[slot];
