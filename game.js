@@ -1,10 +1,63 @@
 import {
   makeRNG, hashSeed, subSeed, generateDungeon, generateMonsters, generateItem,
-  starterWeapon, MAP_W, MAP_H, T, STATUS,
+  starterWeapon, MAP_W, MAP_H, T, STATUS, ESSENCE_TIERS, ESSENCE_YIELD, ESSENCE_COLOR,
 } from './gen.js';
-import { buildSprites, sprites } from './sprites.js';
+import { buildSprites, sprites, frameFor } from './sprites.js';
 
 const SPR = buildSprites();  // draw all pixel-art once, up front
+
+// ---------- ACCOUNT / AUTH ----------
+// Token lives in localStorage; essence balance is owned by the server. All calls
+// that mutate essence go through the server so it stays authoritative (important
+// once multiplayer lands).
+const Account = {
+  token: localStorage.getItem('seedspire_token') || null,
+  username: null,
+  essence: null,
+  get authed() { return !!this.token; },
+  headers() { return this.token ? { 'Authorization': `Bearer ${this.token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' }; },
+  set(token, account) {
+    this.token = token; this.username = account.username; this.essence = account.essence;
+    localStorage.setItem('seedspire_token', token);
+  },
+  clear() { this.token = null; this.username = null; this.essence = null; localStorage.removeItem('seedspire_token'); },
+};
+
+async function apiRegister(username, password) {
+  const r = await fetch('/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || 'Register failed');
+  Account.set(data.token, data.account);
+  return data.account;
+}
+async function apiLogin(username, password) {
+  const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || 'Login failed');
+  Account.set(data.token, data.account);
+  return data.account;
+}
+async function apiMe() {
+  if (!Account.token) return null;
+  const r = await fetch('/api/me', { headers: Account.headers() });
+  if (!r.ok) { Account.clear(); return null; }
+  const data = await r.json();
+  Account.username = data.account.username; Account.essence = data.account.essence;
+  return data.account;
+}
+async function apiLogout() {
+  if (Account.token) { try { await fetch('/api/logout', { method: 'POST', headers: Account.headers() }); } catch {} }
+  Account.clear();
+}
+// Bank a run's collected essence. keepFraction 1.0 = clean extract, 0.3 = death.
+async function apiBankEssence(amounts, keepFraction) {
+  if (!Account.token) return null;
+  const r = await fetch('/api/essence/bank', { method: 'POST', headers: Account.headers(), body: JSON.stringify({ amounts, keepFraction }) });
+  if (!r.ok) return null;
+  const data = await r.json();
+  Account.essence = data.essence;
+  return data;   // { essence, gained }
+}
 
 // ---------- STATUS ENGINE ----------
 // Any entity (player or monster) carries `.fx_status = {}` — a map of
@@ -88,8 +141,8 @@ function recomputeStats() {
   const p = G.player;
   const eq = Object.values(p.equip).filter(Boolean);
   const s = { maxHp: 100, armor: 0, critChance: 0.05, critDmg: 0.5, lifesteal: 0, moveSpeed: 0,
-    dodge: 0, regen: 1, cdr: 0, flatDmg: 0, fireDmg: 0, coldDmg: 0, lightningDmg: 0 };
-  s.maxHp += (p.level - 1) * 12;
+    dodge: 0, regen: 0.25, cdr: 0, flatDmg: 0, fireDmg: 0, coldDmg: 0, lightningDmg: 0 };
+  s.maxHp += (p.level - 1) * 10;
   for (const it of eq) for (const [k, v] of Object.entries(it.stats)) {
     if (s[k] != null && !['dmgLo', 'dmgHi', 'spd'].includes(k)) s[k] += v;
   }
@@ -139,6 +192,7 @@ function newRun(seed, name) {
     id: null, seed, name: name || 'Wanderer',
     rng: makeRNG(numericSeed ^ 0x9e3779b9),
     floor: 1, floorsCleared: 0, gold: 0, killCount: 0,
+    runEssence: { common: 0, uncommon: 0, rare: 0, epic: 0, legendary: 0 },  // banked at extract/death
     player: {
       px: 0, py: 0, hp: 100, maxHp: 100, level: 1, xp: 0, xpNext: 20,
       dir: { x: 0, y: 1 }, dashCd: 0, invuln: 0, hitFlash: 0,
@@ -338,10 +392,10 @@ function killMonster(m) {
     const item = generateItem(G.seed, `f${G.floor}_${m.id}_${G.killCount}`, G.floor, m.boss ? 1.5 : 0.2);
     G.drops.push({ x: m.fx, y: m.fy, item, fx: m.fx, fy: m.fy });
   }
-  // gold + hp orbs
+  // gold + hp orbs (healing is scarcer now — you're meant to feel attrition)
   const gold = G.rng.int(2, 6) + G.floor;
   G.pickups.push({ x: m.fx, y: m.fy, type: 'gold', amt: gold });
-  if (G.rng.chance(0.3)) G.pickups.push({ x: m.fx + 0.3, y: m.fy, type: 'hp', amt: 10 + G.floor });
+  if (G.rng.chance(0.10)) G.pickups.push({ x: m.fx + 0.3, y: m.fy, type: 'hp', amt: 5 + Math.floor(G.floor * 0.4) });
   if (m.boss) { log(`${m.name} falls!`, 'var(--gold)'); screenShake(10); }
 }
 
@@ -354,7 +408,7 @@ function damagePlayer(amount, incomingStatus = null) {
   let dmg = amount * (100 / (100 + p.stats.armor));
   dmg *= statusMul(p, 'dmgTakenMul');                  // Fortify (down) / Vulnerable (up)
   p.hp -= dmg;
-  p.hitFlash = 0.2; p.invuln = 0.4;
+  p.hitFlash = 0.2; p.invuln = 0.25;
   if (incomingStatus && G.rng.chance(incomingStatus.chance ?? 1)) applyStatus(p, incomingStatus.status, incomingStatus.dur, 1);
   screenShake(5);
   if (p.hp <= 0) gameOver();
@@ -368,15 +422,15 @@ function gainXp(amount) {
     p.level++;
     p.xpNext = Math.round(p.xpNext * 1.35 + 10);
     recomputeStats();
-    p.hp = p.maxHp;
+    p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.2);   // small heal, not a reset
     log(`Level up! You are level ${p.level}.`, 'var(--accent)');
     G.effects.push({ type: 'levelup', x: p.px, y: p.py, life: .8, t: 0 });
   }
 }
 
-// Player base move speed is ~120 u/s; MOB_SPD is tuned so a spd of 1.0 lands near
-// 78 u/s — fast enough that a straight-line kite no longer trivially works.
-const MOB_SPD = 78;
+// Player base move speed is 100 u/s; MOB_SPD 90 means a spd-1.0 chaser nearly keeps
+// pace — you can create space but can't freely outrun a straight-line pursuer.
+const MOB_SPD = 90;
 const PROJ_COLORS = { fire: '#ff7a3c', cold: '#63c6ff', void: '#b46bff', poison: '#8fd14b', lightning: '#ffe14a' };
 
 // Slide a monster toward a target point (or away, if sign = -1). Axis-separated so
@@ -411,7 +465,7 @@ function enemyShoot(m, mx, my, opts = {}) {
     const a = baseAng + (count > 1 ? (i - (count - 1) / 2) * spread : 0);
     G.eproj.push({
       x: mx, y: my, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
-      life: opts.life || 2.2, dmg: Math.round(m.dmg * (opts.dmgMul || 0.9)),
+      life: opts.life || 2.2, dmg: Math.round(m.dmg * (opts.dmgMul || 1.0)),
       color, ptype: m.proj, r: 5, arc: opts.arc || false,
       onHit: PROJ_STATUS[m.proj] || null,
     });
@@ -470,11 +524,11 @@ function updateMonsters(dt) {
           if (dist < ideal - 40) moveMob(m, p.px, p.py, spd, dt, -1);       // retreat
           else if (dist > ideal + 40) moveMob(m, p.px, p.py, spd * 0.9, dt); // close in
           else moveMob(m, p.px + (my - p.py) * 0.3, p.py + (p.px - mx) * 0.3, spd * 0.5, dt); // strafe
-          if (!silenced && dist < 260 && m.atkCd <= 0 && m.telegraph <= 0) { m.telegraph = 0.35; }
-          if (m.telegraph > 0 && m.telegraph - dt <= 0 && dist < 300 && !silenced) {
-            if (m.special === 'volley') enemyShoot(m, mx, my, { count: 3, spread: 0.28, speed: 165 });
-            else enemyShoot(m, mx, my, { speed: 175 });
-            m.atkCd = 1.6 + Math.random() * 0.6;
+          if (!silenced && dist < 300 && m.atkCd <= 0 && m.telegraph <= 0) { m.telegraph = 0.28; }
+          if (m.telegraph > 0 && m.telegraph - dt <= 0 && dist < 340 && !silenced) {
+            if (m.special === 'volley') enemyShoot(m, mx, my, { count: 3, spread: 0.24, speed: 230 });
+            else enemyShoot(m, mx, my, { speed: 245 });
+            m.atkCd = 1.1 + Math.random() * 0.5;
           }
           break;
         }
@@ -482,15 +536,15 @@ function updateMonsters(dt) {
           // Spitter: advance slowly, lob arcing shots at mid range.
           if (dist > 90) moveMob(m, p.px, p.py, spd * 0.75, dt);
           else if (dist < 55) moveMob(m, p.px, p.py, spd * 0.6, dt, -1);
-          if (!silenced && dist < 240 && m.atkCd <= 0) { enemyShoot(m, mx, my, { speed: 120, arc: true, life: 2.6, dmgMul: 1.1 }); m.atkCd = 1.8; }
+          if (!silenced && dist < 260 && m.atkCd <= 0) { enemyShoot(m, mx, my, { speed: 165, arc: true, life: 2.6, dmgMul: 1.15 }); m.atkCd = 1.2; }
           break;
         }
         case 'boss': {
           // Boss: chases, periodic ranged volleys, occasional big slam telegraph.
           if (dist > 40) moveMob(m, p.px, p.py, spd, dt);
           if (!silenced && m.atkCd <= 0) {
-            if (dist < 300) enemyShoot(m, mx, my, { count: 5, spread: 0.32, speed: 160, dmgMul: 0.8 });
-            m.atkCd = 2.0;
+            if (dist < 340) enemyShoot(m, mx, my, { count: 5, spread: 0.30, speed: 210 });
+            m.atkCd = 1.4;
           }
           break;
         }
@@ -507,14 +561,14 @@ function updateMonsters(dt) {
       }
     }
 
-    // melee contact damage (all types can still hurt you on touch, but less than specials)
+    // melee contact damage
     if (dist < 18 && m.behavior !== 'boss') {
       if ((m.touchCd = (m.touchCd || 0) - dt) <= 0) {
-        damagePlayer(m.behavior === 'charger' && m.chargeState === 'dash' ? Math.round(m.dmg * 1.5) : m.dmg);
-        m.touchCd = 0.7;
+        damagePlayer(m.behavior === 'charger' && m.chargeState === 'dash' ? Math.round(m.dmg * 1.6) : m.dmg);
+        m.touchCd = 0.5;
       }
     } else if (dist < 20 && m.boss) {
-      if ((m.touchCd = (m.touchCd || 0) - dt) <= 0) { damagePlayer(m.dmg); m.touchCd = 0.6; }
+      if ((m.touchCd = (m.touchCd || 0) - dt) <= 0) { damagePlayer(m.dmg); m.touchCd = 0.45; }
     }
   }
 }
@@ -607,24 +661,85 @@ function checkStairs() {
   const tx = Math.floor(p.px / TILE), ty = Math.floor(p.py / TILE);
   if (G.grid[ty]?.[tx] === T.STAIRS) {
     if (G.monsters.some((m) => m.boss)) { log('The warden bars the stairs.', 'var(--danger)'); return; }
+    // Every 5th floor cleared (5,10,15...): offer to extract with 100% essence.
+    const nextFloor = G.floor + 1;
+    if (G.floor % 5 === 0 && !G.extractShownFor?.[G.floor]) {
+      G.extractShownFor = G.extractShownFor || {};
+      G.extractShownFor[G.floor] = true;
+      openExtractChoice();
+      return; // pause here; player chooses leave or descend
+    }
     G.floorsCleared++;
-    buildFloor(G.floor + 1);
+    buildFloor(nextFloor);
     saveRun();
   }
 }
 
+// Total essence collected this run (for UI).
+function runEssenceTotal() { return ESSENCE_TIERS.reduce((s, t) => s + (G.runEssence[t] || 0), 0); }
+
+// Show the leave-or-continue overlay at a checkpoint.
+function openExtractChoice() {
+  G.paused = true;
+  const total = runEssenceTotal();
+  const breakdown = ESSENCE_TIERS.filter((t) => G.runEssence[t] > 0)
+    .map((t) => `<span style="color:${ESSENCE_COLOR[t]}">${G.runEssence[t]} ${t}</span>`).join(' · ') || 'none yet';
+  document.getElementById('extractBreakdown').innerHTML =
+    `You've collected <b>${total}</b> essence this run: ${breakdown}.`
+    + (Account.authed ? '' : `<br><span style="color:var(--danger);font-size:12px">You're playing as a guest — log in to actually bank essence.</span>`);
+  document.getElementById('extractFloor').textContent = `FLOOR ${G.floor} CHECKPOINT`;
+  document.getElementById('extractModal').style.display = 'flex';
+}
+
+// Leave now: bank 100% and return to menu.
+async function extractLeave() {
+  document.getElementById('extractModal').style.display = 'none';
+  G.alive = false; G.paused = false;
+  const res = await apiBankEssence(G.runEssence, 1.0);
+  await fetch('/api/score', { method: 'POST', headers: Account.headers(),
+    body: JSON.stringify({ name: Account.username || G.name, seed: G.seed, floor: G.floor, level: G.player.level }) }).catch(()=>{});
+  showBankedSummary(res, true);
+}
+
+// Descend: keep playing, essence stays at risk.
+function extractContinue() {
+  document.getElementById('extractModal').style.display = 'none';
+  G.paused = false;
+  G.floorsCleared++;
+  buildFloor(G.floor + 1);
+  saveRun();
+}
+
 // ---------- game over ----------
 async function gameOver() {
+  if (!G.alive) return;
   G.alive = false;
   log('You have fallen.', 'var(--danger)');
-  try {
-    await fetch('/api/score', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: G.name, seed: G.seed, floor: G.floor, level: G.player.level }) });
-  } catch {}
-  setTimeout(() => {
-    document.getElementById('menu').style.display = 'flex';
-    loadScores();
-  }, 1200);
+  // Death: bank only 30% of collected essence.
+  let res = null;
+  if (Account.authed) res = await apiBankEssence(G.runEssence, 0.3);
+  await fetch('/api/score', { method: 'POST', headers: Account.authed ? Account.headers() : { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: Account.username || G.name, seed: G.seed, floor: G.floor, level: G.player.level }) }).catch(()=>{});
+  setTimeout(() => showBankedSummary(res, false), 1000);
+}
+
+// Summary overlay after a run ends (either way), showing what got banked.
+function showBankedSummary(res, clean) {
+  const el = document.getElementById('deathModal');
+  const title = document.getElementById('deathTitle');
+  const body = document.getElementById('deathBody');
+  if (clean) { title.textContent = 'EXTRACTED SAFELY'; title.style.color = 'var(--accent)'; }
+  else { title.textContent = 'YOU FELL'; title.style.color = 'var(--danger)'; }
+  if (res && res.gained) {
+    const parts = ESSENCE_TIERS.filter((t) => res.gained[t] > 0)
+      .map((t) => `<span style="color:${ESSENCE_COLOR[t]}">+${res.gained[t]} ${t}</span>`).join(' · ');
+    const pct = clean ? '100%' : '30%';
+    body.innerHTML = `Reached floor <b>${G.floor}</b>. Banked <b>${pct}</b> of your essence:<br>${parts || 'none'}<br>` +
+      `<span style="color:var(--dim);font-size:12px">Total vault: ${ESSENCE_TIERS.map((t)=>`${Account.essence[t]} ${t}`).join(' · ')}</span>`;
+  } else {
+    body.innerHTML = `Reached floor <b>${G.floor}</b>.` + (Account.authed ? '' : '<br><span style="color:var(--dim);font-size:12px">Log in to bank essence between runs.</span>');
+  }
+  el.style.display = 'flex';
 }
 
 // ---------- effects & juice ----------
@@ -671,11 +786,12 @@ function update(dt) {
   if (keys['d'] || keys['arrowright']) mx += 1;
   mx += touchVec.x; my += touchVec.y;
   const mag = Math.hypot(mx, my);
+  p.moving = (mag > 0 && !rooted);
   if (mag > 0 && !rooted) {
     mx /= mag; my /= mag;
     p.dir = { x: mx, y: my };
     const moveMul = statusMul(p, 'moveMul');   // chill/slow (down) or haste (up)
-    const speed = 120 * (1 + p.stats.moveSpeed) * (p.dashT > 0 ? 2.4 : 1) * moveMul;
+    const speed = 100 * (1 + p.stats.moveSpeed) * (p.dashT > 0 ? 2.4 : 1) * moveMul;
     const nx = p.px + mx * speed * dt, ny = p.py + my * speed * dt;
     if (canMove(nx, p.py)) p.px = nx;
     if (canMove(p.px, ny)) p.py = ny;
@@ -776,8 +892,9 @@ function draw() {
   // monsters
   for (const m of G.monsters) {
     const sx=Math.round(m.fx*TILE+TILE/2-camX), sy=Math.round(m.fy*TILE+TILE/2-camY);
-    const spr = SPR.mob[m.key] || SPR.mob.grub;
-    const dw = m.boss ? 48 : 32, dh = dw;
+    const sprObj = SPR.mob[m.key] || SPR.mob.grub;
+    const spr = frameFor(sprObj, m.fx * 0.7);   // phase by position so they don't sync
+    const dw = m.boss ? 54 : 36, dh = dw;
     const bob = Math.sin(Date.now()/220 + m.fx) * 1.2;   // idle bob
     // telegraph flash before a special attack — the player's cue to react
     if (m.telegraph > 0) {
@@ -835,11 +952,12 @@ function draw() {
     ctx.shadowColor = p.dashT>0 ? '#6fe3c4' : (hasStatus(p,'rage') ? '#ff5d6c' : '#6fe3c4');
     ctx.shadowBlur = p.dashT>0 ? 16 : 5;
     const faceLeft = p.dir.x < -0.1;
+    const hspr = frameFor(SPR.hero, p.moving ? Date.now()/60 : 0);  // faster stride while moving
     ctx.save(); ctx.translate(psx, psy + bob); if (faceLeft) ctx.scale(-1,1);
-    ctx.drawImage(SPR.hero, -16, -18, 32, 32);
+    ctx.drawImage(hspr, -18, -20, 36, 36);
     ctx.restore(); ctx.shadowBlur = 0;
     // hit flash
-    if (p.hitFlash > 0) { ctx.save(); ctx.globalAlpha = p.hitFlash/0.2*0.7; ctx.globalCompositeOperation='lighter'; ctx.translate(psx,psy+bob); if(faceLeft)ctx.scale(-1,1); ctx.drawImage(SPR.hero,-16,-18,32,32); ctx.restore(); }
+    if (p.hitFlash > 0) { ctx.save(); ctx.globalAlpha = p.hitFlash/0.2*0.7; ctx.globalCompositeOperation='lighter'; ctx.translate(psx,psy+bob); if(faceLeft)ctx.scale(-1,1); ctx.drawImage(hspr,-18,-20,36,36); ctx.restore(); }
     // small facing dot toward aim
     ctx.fillStyle='#6fe3c4'; ctx.globalAlpha=.8; ctx.beginPath(); ctx.arc(psx+p.dir.x*11, psy+p.dir.y*11, 2, 0, 7); ctx.fill(); ctx.globalAlpha=1;
     // shield buff ring
@@ -918,10 +1036,31 @@ function toggleInv() {
   if (inv.classList.contains('open')) renderInv();
 }
 document.getElementById('closeInv').onclick = toggleInv;
+// Destroy a single item → grant essence of its tier to the run tally.
+function destroyItem(it) {
+  const p = G.player;
+  p.bag = p.bag.filter((x) => x !== it);
+  const gain = ESSENCE_YIELD[it.rarity] || 1;
+  G.runEssence[it.rarity] = (G.runEssence[it.rarity] || 0) + gain;
+  log(`Destroyed ${it.name} → +${gain} ${it.rarity} essence`, ESSENCE_COLOR[it.rarity]);
+  renderInv();
+}
+// Destroy everything at or below a chosen tier in one click.
 document.getElementById('sellJunk').onclick = () => {
-  let g = 0;
-  G.player.bag = G.player.bag.filter((it) => { if (it.rarity === 'common') { g += it.value; return false; } return true; });
-  G.gold += g; log(`Sold commons for ${g} gold.`, 'var(--gold)'); renderInv();
+  const p = G.player;
+  const rank = { common:1, uncommon:2, rare:3, epic:4, legendary:5 };
+  const keep = [];
+  let total = 0;
+  for (const it of p.bag) {
+    if (rank[it.rarity] <= 2) {   // common + uncommon
+      const gain = ESSENCE_YIELD[it.rarity] || 1;
+      G.runEssence[it.rarity] = (G.runEssence[it.rarity] || 0) + gain;
+      total += gain;
+    } else keep.push(it);
+  }
+  p.bag = keep;
+  if (total) log(`Salvaged junk → +${total} essence`, 'var(--accent)');
+  renderInv();
 };
 
 const SLOT_ORDER = [['weapon','Weapon'],['weapon2','Off-hand'],['armor','Armor'],['trinket','Trinket']];
@@ -945,7 +1084,13 @@ function renderInv() {
 
   const bag = document.getElementById('bag'); bag.innerHTML = '';
   document.getElementById('bagCount').textContent = p.bag.length;
-  document.getElementById('bagCount') && (document.getElementById('bagCount').textContent = p.bag.length);
+  // run essence summary
+  const es = document.getElementById('runEssence');
+  if (es) {
+    const parts = ESSENCE_TIERS.filter((t) => G.runEssence[t] > 0)
+      .map((t) => `<span style="color:${ESSENCE_COLOR[t]}">${G.runEssence[t]} ${t}</span>`);
+    es.innerHTML = parts.length ? `This run: ${parts.join(' · ')}` : 'This run: no essence yet — destroy items to collect it';
+  }
   // sort: rarity then ilvl
   const order = { legendary:5, epic:4, rare:3, uncommon:2, common:1 };
   [...p.bag].sort((a,b)=> (order[b.rarity]-order[a.rarity])||(b.ilvl-a.ilvl)).forEach((it) => {
@@ -953,8 +1098,11 @@ function renderInv() {
     const affLines = it.affixes.map((a)=>`<div class="aff">${a.label}</div>`).join('');
     const abLine = it.ability ? `<div class="ab">✦ ${it.ability.name} — ${it.ability.desc}</div>` : '';
     const dmg = it.stats.dmgHi ? `<span class="tp">${it.stats.dmgLo}-${it.stats.dmgHi} dmg</span>` : it.stats.armor ? `<span class="tp">${it.stats.armor} armor</span>` : `<span class="tp">${it.rarityName}</span>`;
-    c.innerHTML = `<div class="top"><span class="nm" style="color:${it.rarityColor}">${it.name}</span>${dmg}</div>${affLines}${abLine}`;
-    c.onclick = () => { equipItem(it); renderInv(); };
+    const ess = ESSENCE_YIELD[it.rarity] || 1;
+    c.innerHTML = `<div class="top"><span class="nm" style="color:${it.rarityColor}">${it.name}</span>${dmg}</div>${affLines}${abLine}`
+      + `<div class="cardbtns"><button class="ib equip">Equip</button><button class="ib destroy" title="Destroy for ${ess} ${it.rarity} essence">Destroy ✦${ess}</button></div>`;
+    c.querySelector('.equip').onclick = (e) => { e.stopPropagation(); equipItem(it); renderInv(); };
+    c.querySelector('.destroy').onclick = (e) => { e.stopPropagation(); destroyItem(it); };
     bag.appendChild(c);
   });
 }
@@ -1005,7 +1153,7 @@ function escapeHtml(s){return String(s).replace(/[&<>"]/g,(c)=>({'&':'&amp;','<'
 
 document.getElementById('startBtn').onclick = () => {
   const seed = document.getElementById('seedInput').value.trim() || Math.random().toString(36).slice(2, 10);
-  const name = document.getElementById('nameInput').value.trim() || 'Wanderer';
+  const name = Account.username || 'Wanderer';
   document.getElementById('menu').style.display = 'none';
   document.getElementById('log').innerHTML = '';
   newRun(seed, name);
@@ -1016,16 +1164,66 @@ document.getElementById('resumeBtn').onclick = async () => {
   if (ok) document.getElementById('menu').style.display = 'none';
 };
 
+// ---------- auth UI ----------
+let authTab = 'login';
+document.querySelectorAll('.authtab').forEach((el) => {
+  el.onclick = () => {
+    authTab = el.dataset.tab;
+    document.querySelectorAll('.authtab').forEach((t) => t.classList.toggle('active', t === el));
+    document.getElementById('authBtn').textContent = authTab === 'login' ? 'LOG IN' : 'CREATE ACCOUNT';
+    document.getElementById('authError').textContent = '';
+  };
+});
+document.getElementById('authBtn').onclick = async () => {
+  const u = document.getElementById('authUser').value.trim();
+  const pw = document.getElementById('authPass').value;
+  const err = document.getElementById('authError');
+  err.textContent = '';
+  try {
+    if (authTab === 'register') await apiRegister(u, pw);
+    else await apiLogin(u, pw);
+    renderAccount();
+  } catch (e) { err.textContent = e.message; }
+};
+document.getElementById('logoutBtn').onclick = async () => { await apiLogout(); renderAccount(); };
+// Enter in the auth fields submits.
+['authUser', 'authPass'].forEach((id) => {
+  document.getElementById(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('authBtn').click(); });
+});
+document.getElementById('extractLeaveBtn').onclick = () => extractLeave();
+document.getElementById('extractContinueBtn').onclick = () => extractContinue();
+document.getElementById('deathOkBtn').onclick = () => {
+  document.getElementById('deathModal').style.display = 'none';
+  document.getElementById('menu').style.display = 'flex';
+  renderAccount(); loadScores();
+};
+
+// Swap between logged-in / logged-out panels and render the essence vault.
+function renderAccount() {
+  const authed = Account.authed;
+  document.getElementById('authPanel').style.display = authed ? 'none' : 'block';
+  document.getElementById('acctPanel').style.display = authed ? 'block' : 'none';
+  if (authed) {
+    document.getElementById('acctName').textContent = Account.username;
+    const v = document.getElementById('vault');
+    const e = Account.essence || {};
+    v.innerHTML = `<div style="font-size:10px;letter-spacing:.1em;color:var(--dim);margin-bottom:4px">ESSENCE VAULT</div>` +
+      ESSENCE_TIERS.map((t) => `<div class="vrow"><span style="color:${ESSENCE_COLOR[t]}">${t}</span><span>${e[t] || 0}</span></div>`).join('');
+  }
+}
+
 // ---------- boot ----------
 resize();
 loadScores();
+(async () => { await apiMe(); renderAccount(); })();  // restore session if token valid
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
-  if (G && G.alive) { update(dt); draw(); }
+  if (G && G.alive && !G.paused) { update(dt); draw(); }
+  else if (G && G.alive) { draw(); }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 
 // autosave every 20s
-setInterval(() => { if (G && G.alive) saveRun(); }, 20000);
+setInterval(() => { if (G && G.alive && !G.paused) saveRun(); }, 20000);

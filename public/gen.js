@@ -135,7 +135,7 @@ export function generateMonsters(seed, floor, rooms) {
   // Skip the entry room (index 0). Populate the rest.
   for (let i = 1; i < rooms.length; i++) {
     const room = rooms[i];
-    const count = rng.int(0, Math.min(3, 1 + Math.floor(floor / 3)));
+    const count = rng.int(1, Math.min(4, 1 + Math.floor(floor / 2.5)));
     for (let c = 0; c < count; c++) {
       // Wardens are rare; ranged types appear a bit more on deeper floors.
       const arch = rng.weighted(MONSTER_ARCHETYPES.map((a) => ({
@@ -145,8 +145,10 @@ export function generateMonsters(seed, floor, rooms) {
           : 4,
       })));
       const level = floor + rng.int(-1, 1);
-      const maxHp = Math.round((14 + level * 8) * arch.hpMul);
-      const dmg = Math.round((3 + level * 2.2) * arch.dmgMul);
+      // Higher base HP so even floor-1 mobs take a few hits (no one-shotting),
+      // with steep per-level growth so deep floors stay dangerous.
+      const maxHp = Math.round((34 + level * 12) * arch.hpMul);
+      const dmg = Math.round((4 + level * 2.9) * arch.dmgMul);
       const x = room.x + rng.int(0, room.w - 1);
       const y = room.y + rng.int(0, room.h - 1);
       mobs.push({
@@ -170,11 +172,12 @@ export function generateMonsters(seed, floor, rooms) {
   // Boss on floors divisible by 5.
   if (floor % 5 === 0) {
     const room = rooms[rooms.length - 1];
-    const level = floor + 2;
+    const level = floor + 3;
+    const bhp = 60 + level * 30;
     mobs.push({
       id: `boss${floor}`, key: 'boss', name: bossName(rng), glyph: 'Ω', color: '#e0b341',
-      x: room.cx, y: room.cy, hp: (40 + level * 22), maxHp: (40 + level * 22),
-      dmg: Math.round(6 + level * 3), spd: 1.0, level, xp: 60 + level * 12, boss: true,
+      x: room.cx, y: room.cy, hp: bhp, maxHp: bhp,
+      dmg: Math.round(8 + level * 3.6), spd: 1.05, level, xp: 60 + level * 12, boss: true,
       behavior: 'boss', proj: rng.pick(['fire', 'void', 'poison']), special: 'volley',
     });
   }
