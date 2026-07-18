@@ -135,7 +135,7 @@ export function generateMonsters(seed, floor, rooms) {
   // Skip the entry room (index 0). Populate the rest.
   for (let i = 1; i < rooms.length; i++) {
     const room = rooms[i];
-    const count = rng.int(0, Math.min(3, 1 + Math.floor(floor / 3)));
+    const count = rng.int(1, Math.min(4, 1 + Math.floor(floor / 2.5)));
     for (let c = 0; c < count; c++) {
       // Wardens are rare; ranged types appear a bit more on deeper floors.
       const arch = rng.weighted(MONSTER_ARCHETYPES.map((a) => ({
@@ -145,8 +145,10 @@ export function generateMonsters(seed, floor, rooms) {
           : 4,
       })));
       const level = floor + rng.int(-1, 1);
-      const maxHp = Math.round((14 + level * 8) * arch.hpMul);
-      const dmg = Math.round((3 + level * 2.2) * arch.dmgMul);
+      // Higher base HP so even floor-1 mobs take a few hits (no one-shotting),
+      // with steep per-level growth so deep floors stay dangerous.
+      const maxHp = Math.round((34 + level * 12) * arch.hpMul);
+      const dmg = Math.round((6 + level * 4.0) * arch.dmgMul);
       const x = room.x + rng.int(0, room.w - 1);
       const y = room.y + rng.int(0, room.h - 1);
       mobs.push({
@@ -170,11 +172,12 @@ export function generateMonsters(seed, floor, rooms) {
   // Boss on floors divisible by 5.
   if (floor % 5 === 0) {
     const room = rooms[rooms.length - 1];
-    const level = floor + 2;
+    const level = floor + 3;
+    const bhp = 60 + level * 30;
     mobs.push({
       id: `boss${floor}`, key: 'boss', name: bossName(rng), glyph: 'Ω', color: '#e0b341',
-      x: room.cx, y: room.cy, hp: (40 + level * 22), maxHp: (40 + level * 22),
-      dmg: Math.round(6 + level * 3), spd: 1.0, level, xp: 60 + level * 12, boss: true,
+      x: room.cx, y: room.cy, hp: bhp, maxHp: bhp,
+      dmg: Math.round(12 + level * 4.5), spd: 1.05, level, xp: 60 + level * 12, boss: true,
       behavior: 'boss', proj: rng.pick(['fire', 'void', 'poison']), special: 'volley',
     });
   }
@@ -186,13 +189,17 @@ const BOSS_TITLE = ['the Devourer', 'the Unmade', 'Spire-Warden', 'the Hollow Ki
 function bossName(rng) { return `${rng.pick(BOSS_PRE)} ${rng.pick(BOSS_TITLE)}`; }
 
 // ---------- LOOT ----------
+// `ess` = essence granted when an item of this tier is destroyed.
 export const RARITIES = [
-  { key: 'common', name: 'Common', color: '#c8c8c8', w: 100, affixes: [0, 1], mul: 1.0 },
-  { key: 'uncommon', name: 'Uncommon', color: '#5bcf6a', w: 55, affixes: [1, 2], mul: 1.15 },
-  { key: 'rare', name: 'Rare', color: '#4aa3ff', w: 24, affixes: [2, 3], mul: 1.35 },
-  { key: 'epic', name: 'Epic', color: '#b46bff', w: 9, affixes: [3, 4], mul: 1.6 },
-  { key: 'legendary', name: 'Legendary', color: '#f0a733', w: 2.5, affixes: [4, 5], mul: 2.0 },
+  { key: 'common', name: 'Common', color: '#c8c8c8', w: 100, affixes: [0, 1], mul: 1.0, ess: 1 },
+  { key: 'uncommon', name: 'Uncommon', color: '#5bcf6a', w: 55, affixes: [1, 2], mul: 1.15, ess: 2 },
+  { key: 'rare', name: 'Rare', color: '#4aa3ff', w: 24, affixes: [2, 3], mul: 1.35, ess: 4 },
+  { key: 'epic', name: 'Epic', color: '#b46bff', w: 9, affixes: [3, 4], mul: 1.6, ess: 8 },
+  { key: 'legendary', name: 'Legendary', color: '#f0a733', w: 2.5, affixes: [4, 5], mul: 2.0, ess: 20 },
 ];
+export const ESSENCE_TIERS = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
+export const ESSENCE_YIELD = { common: 1, uncommon: 2, rare: 4, epic: 8, legendary: 20 };
+export const ESSENCE_COLOR = { common: '#c8c8c8', uncommon: '#5bcf6a', rare: '#4aa3ff', epic: '#b46bff', legendary: '#f0a733' };
 
 const BASES = {
   weapon: [
