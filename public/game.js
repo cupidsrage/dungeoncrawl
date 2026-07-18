@@ -203,7 +203,7 @@ function buildFloor(floor) {
   G.exit = d.exit;
   G.monsters = generateMonsters(G.seed, floor, d.rooms).map((m) => ({
     ...m, fx: m.x, fy: m.y, hitFlash: 0, aggro: false,
-    atkCd: G.rng.float(0.2, 1.0), chargeState: 'idle', chargeT: 0, telegraph: 0, cvx: 0, cvy: 0,
+    atkCd: G.rng.float(0.2, 1.0), chargeState: 'idle', chargeT: 0, telegraph: 0, cvx: 0, cvy: 0, dodgeCd: 0,
   }));
   G.drops = [];       // ground loot {x,y,item}
   G.projectiles = [];   // player projectiles
@@ -309,20 +309,29 @@ cv.addEventListener('mousemove', (e) => {
   const r = cv.getBoundingClientRect();
   mouse.x = (e.clientX - r.left) / r.width * (VIEW_TILES_X * TILE);
   mouse.y = (e.clientY - r.top) / r.height * (VIEW_TILES_Y * TILE);
+  // keep button state in sync while moving (catches a release the window missed)
+  mouse.down = (e.buttons & 1) !== 0;
+  mouse.right = (e.buttons & 2) !== 0;
 });
-// Track left (button 0) and right (button 2) separately: left = primary ability,
-// right = secondary. preventDefault on right stops the browser's context menu.
+// Track left/right using the buttons bitmask (bit 0 = left, bit 1 = right),
+// which is more reliable across mice than the single-button field.
 cv.addEventListener('mousedown', (e) => {
-  if (e.button === 0) mouse.down = true;
-  else if (e.button === 2) { mouse.right = true; e.preventDefault(); }
+  mouse.down = (e.buttons & 1) !== 0;
+  mouse.right = (e.buttons & 2) !== 0;
+  e.preventDefault();
 });
+// mouseup on window so a release outside the canvas still clears the button.
 window.addEventListener('mouseup', (e) => {
-  if (e.button === 0) mouse.down = false;
-  else if (e.button === 2) mouse.right = false;
+  mouse.down = (e.buttons & 1) !== 0;
+  mouse.right = (e.buttons & 2) !== 0;
 });
-// Suppress the right-click "Save image / context menu" over the whole game area.
-cv.addEventListener('contextmenu', (e) => e.preventDefault());
-document.getElementById('game')?.addEventListener('contextmenu', (e) => e.preventDefault());
+// If the pointer leaves the window or loses focus, clear all buttons so nothing
+// sticks "held" (a common cause of an attack firing on its own).
+window.addEventListener('blur', () => { mouse.down = false; mouse.right = false; });
+document.addEventListener('mouseleave', () => { mouse.down = false; mouse.right = false; });
+// Suppress the right-click context menu ("Save image…") everywhere on the page,
+// so it can never appear over the game regardless of which overlay was clicked.
+window.addEventListener('contextmenu', (e) => { e.preventDefault(); return false; });
 
 // touch controls
 let touchVec = { x: 0, y: 0 }, stickId = null;
@@ -627,6 +636,56 @@ function assignFlankSlots() {
 }
 
 // Enemy fires a projectile (or spread) at the player.
+// Find the retreat direction with the most open space ahead — so a mob backs into
+// a room instead of a corner. Samples 8 directions biased away from the player,
+// scoring each by how far it can travel before hitting a wall.
+function bestRetreatDir(mx, my) {
+  const px = G.player.px, py = G.player.py;
+  const away = Math.atan2(my - py, mx - px);   // straight away from player
+  let bestScore = -1, bestAng = away;
+  for (let i = 0; i < 8; i++) {
+    const ang = away + (i - 3.5) * 0.45;        // fan of directions around "away"
+    let clear = 0;
+    for (let d = TILE; d <= TILE * 6; d += TILE) {
+      const tx = Math.floor((mx + Math.cos(ang) * d) / TILE);
+      const ty = Math.floor((my + Math.sin(ang) * d) / TILE);
+      if (isWall(tx, ty)) break;
+      clear = d;
+    }
+    // prefer directions that are both open AND roughly away from the player
+    const awayBias = Math.cos(ang - away) * TILE;   // bonus for pointing away
+    const score = clear + awayBias;
+    if (score > bestScore) { bestScore = score; bestAng = ang; }
+  }
+  return bestAng;
+}
+
+// True when the player is attacking AND roughly aiming at this monster — its cue
+// to sidestep. Uses the aim vector (mouse) vs. direction to the monster.
+function playerAimingAt(mx, my) {
+  if (!(mouse.down || mouse.right || keys['j'] || keys['l'])) return false;
+  const aimX = mouse.x - VIEW_TILES_X * TILE / 2 + G.player.px;
+  const aimY = mouse.y - VIEW_TILES_Y * TILE / 2 + G.player.py;
+  const aimAng = Math.atan2(aimY - G.player.py, aimX - G.player.px);
+  const toMobAng = Math.atan2(my - G.player.py, mx - G.player.px);
+  let diff = Math.abs(aimAng - toMobAng);
+  if (diff > Math.PI) diff = Math.PI * 2 - diff;
+  return diff < 0.5;   // within ~28° of the aim line
+}
+
+// Sidestep perpendicular to the player's aim, to juke an incoming attack.
+function dodgeStep(m, spd, dt) {
+  const mx = m.fx * TILE + TILE / 2, my = m.fy * TILE + TILE / 2;
+  const toPlayer = Math.atan2(G.player.py - my, G.player.px - mx);
+  const side = (m.dodgeDir || (m.dodgeDir = Math.random() < 0.5 ? 1 : -1));
+  const perp = toPlayer + side * Math.PI / 2;
+  const tx = mx + Math.cos(perp) * TILE * 2, ty = my + Math.sin(perp) * TILE * 2;
+  // if that side is walled, flip
+  if (isWall(Math.floor(tx / TILE), Math.floor(ty / TILE))) m.dodgeDir = -side;
+  moveMob(m, mx + Math.cos(toPlayer + m.dodgeDir * Math.PI / 2) * TILE * 2,
+             my + Math.sin(toPlayer + m.dodgeDir * Math.PI / 2) * TILE * 2, spd * 1.3, dt);
+}
+
 // Map each enemy projectile element to the debuff it inflicts on the player.
 const PROJ_STATUS = {
   fire: { status: 'burn', chance: 1, dur: 2.5 },
@@ -707,21 +766,24 @@ function updateMonsters(dt) {
           break;
         }
         case 'caster': {
-          // Keep a shooting lane WITH line of sight. If blocked, reposition to
-          // regain LOS (use cover the other way). Hold mid-range, strafe when set.
+          // Keep a shooting lane WITH line of sight. Retreat into OPEN space (not
+          // corners). Dodge when the player aims at it. Hold mid-range and strafe.
           const ideal = 150;
-          if (!los) {
+          if (playerAimingAt(mx, my) && dist < 220 && m.dodgeCd <= 0) {
+            dodgeStep(m, spd, dt); m.dodgeCd = 0.8;
+          } else if (!los) {
             pathToPlayer(m, spd * 0.95, dt);   // move until it can see you again
           } else if (dist < ideal - 45) {
-            // too close: back off toward its flank slot to keep distance
-            const fp = flankPoint(m, ideal + 30); moveMob(m, fp.x, fp.y, spd, dt);
+            // too close: retreat toward the most open direction away from player
+            const ra = bestRetreatDir(mx, my);
+            moveMob(m, mx + Math.cos(ra) * TILE * 4, my + Math.sin(ra) * TILE * 4, spd, dt);
           } else if (dist > ideal + 60) {
             pathToPlayer(m, spd * 0.9, dt);
           } else {
-            // strafe along the arc to be a harder target
             const sa = Math.atan2(my - p.py, mx - p.px) + (m.strafeDir || (m.strafeDir = Math.random() < 0.5 ? 1 : -1)) * 0.5;
             moveMob(m, p.px + Math.cos(sa) * ideal, p.py + Math.sin(sa) * ideal, spd * 0.6, dt);
           }
+          if (m.dodgeCd > 0) m.dodgeCd -= dt;
           if (!silenced && los && dist < 320 && m.atkCd <= 0 && m.telegraph <= 0) m.telegraph = 0.28;
           if (m.telegraph > 0 && m.telegraph - dt <= 0 && los && !silenced) {
             if (m.special === 'volley') enemyShoot(m, mx, my, { count: 3, spread: 0.24, speed: 230 });
@@ -742,10 +804,18 @@ function updateMonsters(dt) {
           if (!silenced && m.atkCd <= 0 && los) { if (dist < 360) enemyShoot(m, mx, my, { count: 5, spread: 0.30, speed: 210 }); m.atkCd = 1.4; }
           break;
         }
-        default: { // chaser (grub, brute) — flank + path around walls
-          const fp = flankPoint(m, 26);
-          if (dist > 40) pathToPoint(m, fp.x, fp.y, spd, dt);   // approach via flank slot
-          else pathToPlayer(m, spd, dt);                        // close for the kill
+        default: { // chaser (grub, brute) — flank wide, juke attacks, then commit
+          if (m.dodgeCd > 0) m.dodgeCd -= dt;
+          // Nimble chasers (grubs) sidestep when you aim at them; brutes don't.
+          if (m.key !== 'brute' && dist < 130 && dist > 30 && playerAimingAt(mx, my) && m.dodgeCd <= 0) {
+            dodgeStep(m, spd, dt); m.dodgeCd = 0.9;
+          } else if (dist > 55) {
+            // approach from an assigned angle, not straight on
+            const fp = flankPoint(m, 60);
+            pathToPoint(m, fp.x, fp.y, spd, dt);
+          } else {
+            pathToPlayer(m, spd, dt);   // close for the kill
+          }
           if (!silenced && m.special === 'slam' && dist < 46 && m.atkCd <= 0 && m.telegraph <= 0) { m.telegraph = 0.5; m.atkCd = 2.6; }
           if (m.telegraph > 0 && m.telegraph - dt <= 0 && dist < 60 && !silenced) {
             damagePlayer(Math.round(m.dmg * 1.8));
@@ -1014,8 +1084,11 @@ function update(dt) {
     if (p.abilities[0]) fireAbility(0, aimX, aimY);
     else meleeSwing();
   }
-  // secondary ability (off-hand weapon): L key or right mouse button
-  if ((keys['l'] || mouse.right) && p.abilities[1]) fireAbility(1, aimX, aimY);
+  // secondary ability (off-hand weapon): L key or right mouse button.
+  if (keys['l'] || mouse.right) {
+    if (p.abilities[1]) fireAbility(1, aimX, aimY);           // has off-hand: fire it
+    else if (mouse.right && p.abilities[0]) fireAbility(0, aimX, aimY); // no off-hand: RMB still attacks
+  }
   if (keys['u']) meleeSwing();
 
   updateMonsters(dt);
