@@ -1,10 +1,41 @@
 import {
   makeRNG, hashSeed, subSeed, generateDungeon, generateMonsters, generateItem,
   starterWeapon, MAP_W, MAP_H, T, STATUS, ESSENCE_TIERS, ESSENCE_YIELD, ESSENCE_COLOR,
-} from './gen.js';
-import { buildSprites, sprites, frameFor } from './sprites.js';
+} from './gen.js?v=5';
+import { buildSprites, sprites, frameFor } from './sprites.js?v=5';
 
-const SPR = buildSprites();  // draw all pixel-art once, up front
+// Build sprites up front. Wrapped so that if anything in the art pipeline throws
+// in a given browser, the game still boots (buttons still work) with fallback art.
+let SPR;
+try {
+  SPR = buildSprites();
+} catch (err) {
+  console.error('Sprite build failed, using fallback shapes:', err);
+  SPR = makeFallbackSprites();
+}
+
+// Minimal solid-color canvases so draw() has something to blit if the real art
+// pipeline ever fails. Keeps the game fully playable, just less pretty.
+function makeFallbackSprites() {
+  const solid = (w, h, color) => {
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d'); g.fillStyle = color; g.fillRect(0, 0, w, h);
+    return c;
+  };
+  const mob = (color, boss) => ({ frames: [solid(boss ? 54 : 36, boss ? 54 : 36, color), solid(boss ? 54 : 36, boss ? 54 : 36, color)] });
+  return {
+    floor: ['#1c2130', '#20263a', '#1c2130', '#20263a'].map((c) => solid(20, 20, c)),
+    wall: solid(20, 20, '#0d1119'),
+    stairs: solid(20, 20, '#f0b341'),
+    entry: solid(20, 20, '#6fe3c4'),
+    mob: {
+      grub: mob('#8fae6b'), skitter: mob('#caa24b'), brute: mob('#8a8073'),
+      shade: mob('#7d6bad'), spitter: mob('#6fa64a'), warden: mob('#b8505f'), boss: mob('#e0b341', true),
+    },
+    hero: { frames: [solid(36, 36, '#e7e3d4'), solid(36, 36, '#e7e3d4')] },
+    gold: solid(14, 14, '#f0b341'), hp: solid(14, 14, '#ff5d6c'),
+  };
+}
 
 // ---------- ACCOUNT / AUTH ----------
 // Token lives in localStorage; essence balance is owned by the server. All calls
