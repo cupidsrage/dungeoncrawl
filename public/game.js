@@ -154,7 +154,7 @@ const DPR = Math.min(window.devicePixelRatio || 1, 2);
 // ---------- game state ----------
 let G = null; // whole run state
 const keys = {};
-let mouse = { x: 0, y: 0, down: false };
+let mouse = { x: 0, y: 0, down: false, right: false };
 
 function resize() {
   const cw = VIEW_TILES_X * TILE, ch = VIEW_TILES_Y * TILE;
@@ -310,8 +310,19 @@ cv.addEventListener('mousemove', (e) => {
   mouse.x = (e.clientX - r.left) / r.width * (VIEW_TILES_X * TILE);
   mouse.y = (e.clientY - r.top) / r.height * (VIEW_TILES_Y * TILE);
 });
-cv.addEventListener('mousedown', () => { mouse.down = true; });
-window.addEventListener('mouseup', () => { mouse.down = false; });
+// Track left (button 0) and right (button 2) separately: left = primary ability,
+// right = secondary. preventDefault on right stops the browser's context menu.
+cv.addEventListener('mousedown', (e) => {
+  if (e.button === 0) mouse.down = true;
+  else if (e.button === 2) { mouse.right = true; e.preventDefault(); }
+});
+window.addEventListener('mouseup', (e) => {
+  if (e.button === 0) mouse.down = false;
+  else if (e.button === 2) mouse.right = false;
+});
+// Suppress the right-click "Save image / context menu" over the whole game area.
+cv.addEventListener('contextmenu', (e) => e.preventDefault());
+document.getElementById('game')?.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // touch controls
 let touchVec = { x: 0, y: 0 }, stickId = null;
@@ -464,6 +475,121 @@ function gainXp(amount) {
 const MOB_SPD = 90;
 const PROJ_COLORS = { fire: '#ff7a3c', cold: '#63c6ff', void: '#b46bff', poison: '#8fd14b', lightning: '#ffe14a' };
 
+// ---------- line of sight ----------
+// Bresenham walk between two tiles; false if any wall blocks the line.
+function tileLOS(x0, y0, x1, y1) {
+  let dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+  let sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  let err = dx - dy, x = x0, y = y0;
+  for (let i = 0; i < 200; i++) {
+    if (isWall(x, y)) return false;
+    if (x === x1 && y === y1) return true;
+    const e2 = 2 * err;
+    if (e2 > -dy) { err -= dy; x += sx; }
+    if (e2 < dx) { err += dy === 0 ? 0 : dx, y += sy; }
+  }
+  return true;
+}
+// World-space LOS between a monster and the player.
+function hasLOS(mx, my, tx, ty) {
+  return tileLOS(Math.floor(mx / TILE), Math.floor(my / TILE), Math.floor(tx / TILE), Math.floor(ty / TILE));
+}
+
+// ---------- flow-field pathfinding ----------
+// Once per frame we BFS outward from the player's tile across all floor tiles,
+// storing distance in G.flow. A monster reads the neighbor with the lowest
+// distance to get a direction that routes AROUND walls — real navigation, shared
+// cheaply by every monster instead of per-mob A*.
+function rebuildFlowField() {
+  const pt = { x: Math.floor(G.player.px / TILE), y: Math.floor(G.player.py / TILE) };
+  const dist = new Int16Array(MAP_W * MAP_H).fill(-1);
+  if (isWall(pt.x, pt.y)) { G.flow = null; return; }
+  const q = [pt]; dist[pt.y * MAP_W + pt.x] = 0;
+  let head = 0;
+  while (head < q.length) {
+    const c = q[head++];
+    const d = dist[c.y * MAP_W + c.x];
+    for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+      const nx = c.x + dx, ny = c.y + dy;
+      if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+      if (isWall(nx, ny)) continue;
+      const idx = ny * MAP_W + nx;
+      if (dist[idx] !== -1) continue;
+      dist[idx] = d + 1; q.push({ x: nx, y: ny });
+    }
+  }
+  G.flow = dist;
+}
+// Direction (unit vector) a monster should travel to approach the player via the
+// flow field. Falls back to straight-line if no field. Returns {x,y} or null.
+function flowDir(mx, my) {
+  if (!G.flow) return null;
+  const tx = Math.floor(mx / TILE), ty = Math.floor(my / TILE);
+  const here = G.flow[ty * MAP_W + tx];
+  if (here < 0) return null;
+  let best = here, bx = 0, by = 0;
+  for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]]) {
+    const nx = tx + dx, ny = ty + dy;
+    if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+    if (isWall(nx, ny)) continue;
+    const d = G.flow[ny * MAP_W + nx];
+    if (d >= 0 && d < best) { best = d; bx = dx; by = dy; }
+  }
+  if (bx === 0 && by === 0) return null;
+  const mag = Math.hypot(bx, by);
+  return { x: bx / mag, y: by / mag };
+}
+
+// Move a monster along the flow field toward the player (pathing around walls).
+// If it has clear LOS and is close, it beelines instead (smoother final approach).
+function pathToPlayer(m, unitsPerSec, dt) {
+  const mx = m.fx * TILE + TILE / 2, my = m.fy * TILE + TILE / 2;
+  const straight = hasLOS(mx, my, G.player.px, G.player.py);
+  let dir;
+  if (straight) {
+    const a = Math.atan2(G.player.py - my, G.player.px - mx);
+    dir = { x: Math.cos(a), y: Math.sin(a) };
+  } else {
+    dir = flowDir(mx, my) || { x: 0, y: 0 };
+  }
+  applyMobVelocity(m, dir, unitsPerSec, dt);
+}
+
+// Move toward an arbitrary world point via flow field when blocked, else straight.
+function pathToPoint(m, tx, ty, unitsPerSec, dt) {
+  const mx = m.fx * TILE + TILE / 2, my = m.fy * TILE + TILE / 2;
+  let dir;
+  if (hasLOS(mx, my, tx, ty)) {
+    const a = Math.atan2(ty - my, tx - mx);
+    dir = { x: Math.cos(a), y: Math.sin(a) };
+  } else {
+    dir = flowDir(mx, my) || { x: 0, y: 0 };
+  }
+  applyMobVelocity(m, dir, unitsPerSec, dt);
+}
+
+// Shared velocity application with local separation so mobs don't stack, plus
+// axis-separated wall sliding.
+function applyMobVelocity(m, dir, unitsPerSec, dt) {
+  let vx = dir.x, vy = dir.y;
+  // separation: gently push away from nearby monsters so a pack spreads out
+  const mx = m.fx * TILE + TILE / 2, my = m.fy * TILE + TILE / 2;
+  let sepx = 0, sepy = 0;
+  for (const o of G.monsters) {
+    if (o === m) continue;
+    const ox = o.fx * TILE + TILE / 2, oy = o.fy * TILE + TILE / 2;
+    const d = Math.hypot(ox - mx, oy - my);
+    if (d > 0 && d < 22) { sepx += (mx - ox) / d; sepy += (my - oy) / d; }
+  }
+  vx += sepx * 0.6; vy += sepy * 0.6;
+  const mag = Math.hypot(vx, vy) || 1; vx /= mag; vy /= mag;
+  const step = unitsPerSec * dt;
+  const nx = mx + vx * step, ny = my + vy * step;
+  if (!isWall(Math.floor(nx / TILE), Math.floor(my / TILE))) m.fx = (nx - TILE / 2) / TILE;
+  const cx = m.fx * TILE + TILE / 2;
+  if (!isWall(Math.floor(cx / TILE), Math.floor(ny / TILE))) m.fy = (ny - TILE / 2) / TILE;
+}
+
 // Slide a monster toward a target point (or away, if sign = -1). Axis-separated so
 // they hug walls instead of sticking. Returns true if it moved appreciably.
 function moveMob(m, tx, ty, unitsPerSec, dt, sign = 1) {
@@ -476,6 +602,28 @@ function moveMob(m, tx, ty, unitsPerSec, dt, sign = 1) {
   const cx = m.fx * TILE + TILE / 2;
   if (!isWall(Math.floor(cx / TILE), Math.floor(ny / TILE))) { m.fy = (ny - TILE / 2) / TILE; moved = true; }
   return moved;
+}
+
+// A flank offset point: each mob claims an angle around the player and aims for a
+// spot on that ring, so a group surrounds instead of clumping head-on.
+function flankPoint(m, radius) {
+  const ang = m.flankAngle ?? (m.flankAngle = Math.random() * Math.PI * 2);
+  return { x: G.player.px + Math.cos(ang) * radius, y: G.player.py + Math.sin(ang) * radius };
+}
+
+// Distribute all aggroed melee mobs evenly around the player so they encircle
+// rather than pile onto one side. Ranged keep their own spacing logic.
+function assignFlankSlots() {
+  const melee = G.monsters.filter((m) => m.aggro && !m.boss && (m.behavior === 'chaser' || m.behavior === undefined || m.behavior === 'charger'));
+  if (!melee.length) return;
+  // sort by current angle so slots are assigned smoothly, then spread evenly
+  melee.forEach((m) => {
+    const mx = m.fx * TILE + TILE / 2, my = m.fy * TILE + TILE / 2;
+    m._ang = Math.atan2(my - G.player.py, mx - G.player.px);
+  });
+  melee.sort((a, b) => a._ang - b._ang);
+  const n = melee.length;
+  melee.forEach((m, i) => { m.flankAngle = (i / n) * Math.PI * 2 + (Math.random() - 0.5) * 0.3; });
 }
 
 // Enemy fires a projectile (or spread) at the player.
@@ -507,15 +655,21 @@ function enemyShoot(m, mx, my, opts = {}) {
 // ---------- monster AI ----------
 function updateMonsters(dt) {
   const p = G.player;
+  rebuildFlowField();   // one shared BFS from the player; all mobs path off it
+  // periodic flank reassignment so the group re-spaces as you move
+  G.flankTick = (G.flankTick || 0) - dt;
+  if (G.flankTick <= 0) { assignFlankSlots(); G.flankTick = 1.5; }
+
   for (const m of G.monsters) {
     const mx = m.fx * TILE + TILE / 2, my = m.fy * TILE + TILE / 2;
     const dist = Math.hypot(p.px - mx, p.py - my);
+    const los = hasLOS(mx, my, p.px, p.py);
     if (m.hitFlash > 0) m.hitFlash -= dt;
     if (m.telegraph > 0) m.telegraph -= dt;
     if (m.atkCd > 0) m.atkCd -= dt;
-    if (dist < 220) m.aggro = true;
+    // Aggro on sight OR proximity; once aggroed, stays (hunts via flow field).
+    if ((dist < 260 && los) || dist < 130) m.aggro = true;
 
-    // tick this monster's status effects (burn/poison DoT routes to damageMonster-style HP loss)
     tickStatus(m, dt,
       (dmg, color) => { m.hp -= dmg; spawnDamageNumber(mx, my, Math.round(dmg), false, color === '#8fd14b' ? 'poison' : 'fire'); if (m.hp <= 0) killMonster(m); },
       () => {});
@@ -523,21 +677,24 @@ function updateMonsters(dt) {
 
     const rooted = isRooted(m), silenced = isSilenced(m);
     const spd = m.spd * MOB_SPD * statusMul(m, 'moveMul') * (rooted ? 0 : 1);
+    // Pack tactic: badly hurt non-boss mobs break off and retreat to regroup.
+    const lowHP = !m.boss && m.hp < m.maxHp * 0.28;
 
     if (m.aggro && !rooted) {
+      if (lowHP && m.behavior !== 'charger') {
+        // flee away from the player, then rejoin once patched up a bit
+        pathToPoint(m, mx * 2 - p.px, my * 2 - p.py, spd * 1.05, dt);
+        m.regroupT = (m.regroupT || 0) + dt;
+        if (m.hp > m.maxHp * 0.45) m.regroupT = 0;
+      } else {
       switch (m.behavior) {
         case 'charger': {
-          // Skitterling: circle at mid-range, then wind up and dash straight through.
           if (m.chargeState === 'idle') {
-            if (dist < 150 && m.atkCd <= 0) { m.chargeState = 'wind'; m.telegraph = 0.45; m.atkCd = 2.4; }
-            else if (dist > 70) moveMob(m, p.px, p.py, spd * 0.75, dt);   // approach
-            else moveMob(m, p.px, p.py, spd * 0.5, dt, -1);               // back off to reset spacing
+            if (dist < 150 && los && m.atkCd <= 0) { m.chargeState = 'wind'; m.telegraph = 0.45; m.atkCd = 2.4; }
+            else if (dist > 70) pathToPlayer(m, spd * 0.8, dt);           // path in (routes around walls)
+            else moveMob(m, p.px, p.py, spd * 0.5, dt, -1);
           } else if (m.chargeState === 'wind') {
-            if (m.telegraph <= 0) {
-              const a = Math.atan2(p.py - my, p.px - mx);
-              m.cvx = Math.cos(a); m.cvy = Math.sin(a);
-              m.chargeState = 'dash'; m.chargeT = 0.35;
-            }
+            if (m.telegraph <= 0) { const a = Math.atan2(p.py - my, p.px - mx); m.cvx = Math.cos(a); m.cvy = Math.sin(a); m.chargeState = 'dash'; m.chargeT = 0.35; }
           } else if (m.chargeState === 'dash') {
             m.chargeT -= dt;
             const dashSpd = spd * 3.4;
@@ -550,13 +707,23 @@ function updateMonsters(dt) {
           break;
         }
         case 'caster': {
-          // Shade / Warden: keep a shooting lane. Back off if crowded, approach if too far.
-          const ideal = 140;
-          if (dist < ideal - 40) moveMob(m, p.px, p.py, spd, dt, -1);       // retreat
-          else if (dist > ideal + 40) moveMob(m, p.px, p.py, spd * 0.9, dt); // close in
-          else moveMob(m, p.px + (my - p.py) * 0.3, p.py + (p.px - mx) * 0.3, spd * 0.5, dt); // strafe
-          if (!silenced && dist < 300 && m.atkCd <= 0 && m.telegraph <= 0) { m.telegraph = 0.28; }
-          if (m.telegraph > 0 && m.telegraph - dt <= 0 && dist < 340 && !silenced) {
+          // Keep a shooting lane WITH line of sight. If blocked, reposition to
+          // regain LOS (use cover the other way). Hold mid-range, strafe when set.
+          const ideal = 150;
+          if (!los) {
+            pathToPlayer(m, spd * 0.95, dt);   // move until it can see you again
+          } else if (dist < ideal - 45) {
+            // too close: back off toward its flank slot to keep distance
+            const fp = flankPoint(m, ideal + 30); moveMob(m, fp.x, fp.y, spd, dt);
+          } else if (dist > ideal + 60) {
+            pathToPlayer(m, spd * 0.9, dt);
+          } else {
+            // strafe along the arc to be a harder target
+            const sa = Math.atan2(my - p.py, mx - p.px) + (m.strafeDir || (m.strafeDir = Math.random() < 0.5 ? 1 : -1)) * 0.5;
+            moveMob(m, p.px + Math.cos(sa) * ideal, p.py + Math.sin(sa) * ideal, spd * 0.6, dt);
+          }
+          if (!silenced && los && dist < 320 && m.atkCd <= 0 && m.telegraph <= 0) m.telegraph = 0.28;
+          if (m.telegraph > 0 && m.telegraph - dt <= 0 && los && !silenced) {
             if (m.special === 'volley') enemyShoot(m, mx, my, { count: 3, spread: 0.24, speed: 230 });
             else enemyShoot(m, mx, my, { speed: 245 });
             m.atkCd = 1.1 + Math.random() * 0.5;
@@ -564,24 +731,21 @@ function updateMonsters(dt) {
           break;
         }
         case 'bomber': {
-          // Spitter: advance slowly, lob arcing shots at mid range.
-          if (dist > 90) moveMob(m, p.px, p.py, spd * 0.75, dt);
-          else if (dist < 55) moveMob(m, p.px, p.py, spd * 0.6, dt, -1);
-          if (!silenced && dist < 260 && m.atkCd <= 0) { enemyShoot(m, mx, my, { speed: 165, arc: true, life: 2.6, dmgMul: 1.15 }); m.atkCd = 1.2; }
+          // Advance to mid-range via pathing; lob arcs (can arc over low cover).
+          if (dist > 100) pathToPlayer(m, spd * 0.8, dt);
+          else if (dist < 60) moveMob(m, p.px, p.py, spd * 0.6, dt, -1);
+          if (!silenced && dist < 280 && m.atkCd <= 0) { enemyShoot(m, mx, my, { speed: 165, arc: true, life: 2.6, dmgMul: 1.15 }); m.atkCd = 1.2; }
           break;
         }
         case 'boss': {
-          // Boss: chases, periodic ranged volleys, occasional big slam telegraph.
-          if (dist > 40) moveMob(m, p.px, p.py, spd, dt);
-          if (!silenced && m.atkCd <= 0) {
-            if (dist < 340) enemyShoot(m, mx, my, { count: 5, spread: 0.30, speed: 210 });
-            m.atkCd = 1.4;
-          }
+          if (dist > 40) pathToPlayer(m, spd, dt);
+          if (!silenced && m.atkCd <= 0 && los) { if (dist < 360) enemyShoot(m, mx, my, { count: 5, spread: 0.30, speed: 210 }); m.atkCd = 1.4; }
           break;
         }
-        default: { // chaser (grub, brute)
-          if (dist > 6) moveMob(m, p.px, p.py, spd, dt);
-          // Brute slam: telegraphed heavy hit with small radius.
+        default: { // chaser (grub, brute) — flank + path around walls
+          const fp = flankPoint(m, 26);
+          if (dist > 40) pathToPoint(m, fp.x, fp.y, spd, dt);   // approach via flank slot
+          else pathToPlayer(m, spd, dt);                        // close for the kill
           if (!silenced && m.special === 'slam' && dist < 46 && m.atkCd <= 0 && m.telegraph <= 0) { m.telegraph = 0.5; m.atkCd = 2.6; }
           if (m.telegraph > 0 && m.telegraph - dt <= 0 && dist < 60 && !silenced) {
             damagePlayer(Math.round(m.dmg * 1.8));
@@ -589,6 +753,7 @@ function updateMonsters(dt) {
             screenShake(6);
           }
         }
+      }
       }
     }
 
@@ -845,11 +1010,12 @@ function update(dt) {
   const aimX = mouse.x - VIEW_TILES_X * TILE / 2 + p.px;
   const aimY = mouse.y - VIEW_TILES_Y * TILE / 2 + p.py;
   if (keys['j'] || mouse.down || firing) {
-    // primary ability = ability[0] if present, else melee
+    // primary ability (main-hand weapon), else a melee swing
     if (p.abilities[0]) fireAbility(0, aimX, aimY);
     else meleeSwing();
   }
-  if (keys['l'] && p.abilities[1]) fireAbility(1, aimX, aimY);
+  // secondary ability (off-hand weapon): L key or right mouse button
+  if ((keys['l'] || mouse.right) && p.abilities[1]) fireAbility(1, aimX, aimY);
   if (keys['u']) meleeSwing();
 
   updateMonsters(dt);
@@ -1057,7 +1223,7 @@ function renderAbilityBar() {
   const bar = document.getElementById('abilities');
   bar.innerHTML = '';
   const p = G.player;
-  const keyLabels = ['J', 'L'];
+  const keyLabels = ['J / LMB', 'L / RMB'];
   p.abilities.forEach((ab, i) => {
     const s = document.createElement('div');
     s.className = 'slot';
