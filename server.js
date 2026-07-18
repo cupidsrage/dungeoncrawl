@@ -9,11 +9,24 @@ const app = express();
 app.use(express.json({ limit: '512kb' }));
 app.use(express.static(join(__dirname, 'public')));
 
-// Railway persistent volume when attached; local file otherwise.
+// Where the SQLite database lives. Priority:
+//   1. DB_PATH env var (explicit override)
+//   2. Railway's attached volume (persists across restarts/deploys)
+//   3. A local file in the project folder — EPHEMERAL on Railway: this gets wiped
+//      on every restart/deploy, so accounts won't survive without a volume.
+const volumePath = process.env.RAILWAY_VOLUME_MOUNT_PATH;
 const dbPath = process.env.DB_PATH
-  || (process.env.RAILWAY_VOLUME_MOUNT_PATH
-      ? join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'seedspire.db')
-      : join(__dirname, 'seedspire.db'));
+  || (volumePath ? join(volumePath, 'seedspire.db') : join(__dirname, 'seedspire.db'));
+
+const persistent = !!(process.env.DB_PATH || volumePath);
+if (!persistent) {
+  console.warn('\n⚠️  WARNING: No persistent volume detected. The database is on ephemeral');
+  console.warn('   container storage and will be WIPED on every restart/redeploy.');
+  console.warn('   Accounts and essence will NOT survive. Attach a Railway Volume and');
+  console.warn('   the app will use it automatically (via RAILWAY_VOLUME_MOUNT_PATH).\n');
+} else {
+  console.log(`✓ Using persistent database at: ${dbPath}`);
+}
 
 const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
@@ -194,6 +207,19 @@ app.get('/api/scores', (_req, res) => {
 });
 
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
+
+// Diagnostic: check whether the DB is persistent and how many accounts exist.
+// Visit /api/status in your browser to confirm the volume is working.
+app.get('/api/status', (_req, res) => {
+  let accounts = 0;
+  try { accounts = db.prepare('SELECT COUNT(*) AS n FROM accounts').get().n; } catch {}
+  res.json({
+    persistent,
+    storage: persistent ? 'volume (survives restarts)' : 'ephemeral (WIPED on restart!)',
+    dbPath,
+    accounts,
+  });
+});
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Seedspire running on :${port} (db: ${dbPath})`));
