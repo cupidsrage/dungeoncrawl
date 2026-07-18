@@ -204,6 +204,7 @@ function buildFloor(floor) {
   G.monsters = generateMonsters(G.seed, floor, d.rooms).map((m) => ({
     ...m, fx: m.x, fy: m.y, hitFlash: 0, aggro: false,
     atkCd: G.rng.float(0.2, 1.0), chargeState: 'idle', chargeT: 0, telegraph: 0, cvx: 0, cvy: 0, dodgeCd: 0,
+    retreating: false, retreatT: 0, retreatCd: 0,
   }));
   G.drops = [];       // ground loot {x,y,item}
   G.projectiles = [];   // player projectiles
@@ -736,15 +737,26 @@ function updateMonsters(dt) {
 
     const rooted = isRooted(m), silenced = isSilenced(m);
     const spd = m.spd * MOB_SPD * statusMul(m, 'moveMul') * (rooted ? 0 : 1);
-    // Pack tactic: badly hurt non-boss mobs break off and retreat to regroup.
-    const lowHP = !m.boss && m.hp < m.maxHp * 0.28;
+    // Pack tactic: when badly hurt, a mob makes a brief fighting retreat — backs
+    // off for ~1.2s (still shooting if ranged), then re-commits. It does NOT flee
+    // forever (mobs don't heal, so waiting to "recover" would mean never fighting).
+    const lowHP = !m.boss && m.hp < m.maxHp * 0.30;
+    if (lowHP && !m.retreating && (m.retreatCd || 0) <= 0 && m.behavior !== 'charger') {
+      m.retreating = true; m.retreatT = 1.2; m.retreatCd = 5;   // one retreat, then 5s before another
+    }
+    if (m.retreatCd > 0) m.retreatCd -= dt;
+    if (m.retreating) { m.retreatT -= dt; if (m.retreatT <= 0) m.retreating = false; }
 
     if (m.aggro && !rooted) {
-      if (lowHP && m.behavior !== 'charger') {
-        // flee away from the player, then rejoin once patched up a bit
-        pathToPoint(m, mx * 2 - p.px, my * 2 - p.py, spd * 1.05, dt);
-        m.regroupT = (m.regroupT || 0) + dt;
-        if (m.hp > m.maxHp * 0.45) m.regroupT = 0;
+      if (m.retreating) {
+        // fighting retreat: back toward open space, and STILL attack if ranged
+        const ra = bestRetreatDir(mx, my);
+        moveMob(m, mx + Math.cos(ra) * TILE * 4, my + Math.sin(ra) * TILE * 4, spd * 1.1, dt);
+        if (!silenced && (m.behavior === 'caster' || m.behavior === 'bomber' || m.behavior === 'warden')
+            && los && m.atkCd <= 0) {
+          enemyShoot(m, mx, my, m.special === 'volley' ? { count: 3, spread: 0.24, speed: 230 } : { speed: 235 });
+          m.atkCd = 1.3;
+        }
       } else {
       switch (m.behavior) {
         case 'charger': {
