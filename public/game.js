@@ -204,7 +204,7 @@ function buildFloor(floor) {
   G.monsters = generateMonsters(G.seed, floor, d.rooms).map((m) => ({
     ...m, fx: m.x, fy: m.y, hitFlash: 0, aggro: false,
     atkCd: G.rng.float(0.2, 1.0), chargeState: 'idle', chargeT: 0, telegraph: 0, cvx: 0, cvy: 0, dodgeCd: 0,
-    retreating: false, retreatT: 0, retreatCd: 0,
+    retreating: false, retreatT: 0, retreatCd: 0, telegraphKind: null,
   }));
   G.drops = [];       // ground loot {x,y,item}
   G.projectiles = [];   // player projectiles
@@ -699,14 +699,14 @@ function enemyShoot(m, mx, my, opts = {}) {
   const p = G.player;
   const baseAng = Math.atan2(p.py - my, p.px - mx);
   const spread = opts.spread || 0, count = opts.count || 1, speed = opts.speed || 150;
-  const color = PROJ_COLORS[m.proj] || '#ff7a3c';
+  const color = opts.color || PROJ_COLORS[m.proj] || '#ff7a3c';
   for (let i = 0; i < count; i++) {
     const a = baseAng + (count > 1 ? (i - (count - 1) / 2) * spread : 0);
     G.eproj.push({
       x: mx, y: my, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
       life: opts.life || 2.2, dmg: Math.round(m.dmg * (opts.dmgMul || 1.0)),
-      color, ptype: m.proj, r: 5, arc: opts.arc || false,
-      onHit: PROJ_STATUS[m.proj] || null,
+      color, ptype: m.proj, r: opts.r || 5, arc: opts.arc || false,
+      onHit: opts.onHit || PROJ_STATUS[m.proj] || null,
     });
   }
   G.effects.push({ type: 'hit', x: mx, y: my, life: .15, t: 0, color });
@@ -816,23 +816,49 @@ function updateMonsters(dt) {
           if (!silenced && m.atkCd <= 0 && los) { if (dist < 360) enemyShoot(m, mx, my, { count: 5, spread: 0.30, speed: 210 }); m.atkCd = 1.4; }
           break;
         }
-        default: { // chaser (grub, brute) — flank wide, juke attacks, then commit
+        default: { // chaser
           if (m.dodgeCd > 0) m.dodgeCd -= dt;
-          // Nimble chasers (grubs) sidestep when you aim at them; brutes don't.
-          if (m.key !== 'brute' && dist < 130 && dist > 30 && playerAimingAt(mx, my) && m.dodgeCd <= 0) {
-            dodgeStep(m, spd, dt); m.dodgeCd = 0.9;
-          } else if (dist > 55) {
-            // approach from an assigned angle, not straight on
-            const fp = flankPoint(m, 60);
-            pathToPoint(m, fp.x, fp.y, spd, dt);
+          if (m.key === 'brute') {
+            // Stone Brute: a slow tank. Lobs a slowing "boulder" at range to catch
+            // a fleeing player, then closes for a big earthquake slam.
+            if (dist > 55) pathToPlayer(m, spd, dt);
+            else pathToPlayer(m, spd, dt);
+            // Boulder toss: slows the player so the brute can close the gap.
+            if (!silenced && dist > 60 && dist < 300 && m.atkCd <= 0 && m.telegraph <= 0) {
+              m.telegraph = 0.4; m.telegraphKind = 'toss'; m.atkCd = 3.0;
+            }
+            // Earthquake slam when adjacent.
+            if (!silenced && dist < 52 && m.atkCd <= 0 && m.telegraph <= 0) {
+              m.telegraph = 0.6; m.telegraphKind = 'slam'; m.atkCd = 3.2;
+            }
+            // Resolve whichever telegraph finishes.
+            if (m.telegraph > 0 && m.telegraph - dt <= 0 && !silenced) {
+              if (m.telegraphKind === 'toss') {
+                // heavy slow-moving boulder: earthy, big, applies a strong slow so
+                // the lumbering brute can close the distance on a fleeing player
+                enemyShoot(m, mx, my, {
+                  speed: 135, life: 2.6, dmgMul: 0.8, r: 9, color: '#a88b63',
+                  onHit: { status: 'slow', chance: 1, dur: 2.0 },
+                });
+              } else if (m.telegraphKind === 'slam' && dist < 75) {
+                // big earthquake: wide radius, heavy hit, screen shake
+                damagePlayer(Math.round(m.dmg * 1.9));
+                G.effects.push({ type: 'ring', x: mx, y: my, r: 0, maxR: 95, life: .4, t: 0, color: '#c99a5a' });
+                G.effects.push({ type: 'ring', x: mx, y: my, r: 0, maxR: 70, life: .3, t: 0, color: '#ff8a5c' });
+                screenShake(11);
+              }
+              m.telegraphKind = null;
+            }
           } else {
-            pathToPlayer(m, spd, dt);   // close for the kill
-          }
-          if (!silenced && m.special === 'slam' && dist < 46 && m.atkCd <= 0 && m.telegraph <= 0) { m.telegraph = 0.5; m.atkCd = 2.6; }
-          if (m.telegraph > 0 && m.telegraph - dt <= 0 && dist < 60 && !silenced) {
-            damagePlayer(Math.round(m.dmg * 1.8));
-            G.effects.push({ type: 'ring', x: mx, y: my, r: 0, maxR: 55, life: .3, t: 0, color: '#ff8a5c' });
-            screenShake(6);
+            // Nimble chasers (grubs) flank and sidestep your attacks.
+            if (dist < 130 && dist > 30 && playerAimingAt(mx, my) && m.dodgeCd <= 0) {
+              dodgeStep(m, spd, dt); m.dodgeCd = 0.9;
+            } else if (dist > 55) {
+              const fp = flankPoint(m, 60);
+              pathToPoint(m, fp.x, fp.y, spd, dt);
+            } else {
+              pathToPlayer(m, spd, dt);
+            }
           }
         }
       }
@@ -1190,9 +1216,19 @@ function draw() {
     const bob = Math.sin(Date.now()/220 + m.fx) * 1.2;   // idle bob
     // telegraph flash before a special attack — the player's cue to react
     if (m.telegraph > 0) {
-      const t = 1 - m.telegraph / 0.5;
-      ctx.strokeStyle = '#ffcf5c'; ctx.lineWidth = 2; ctx.globalAlpha = 0.4 + 0.6 * Math.abs(Math.sin(Date.now()/60));
-      ctx.beginPath(); ctx.arc(sx, sy, (dw/2) + 2 + t * 5, 0, 7); ctx.stroke(); ctx.globalAlpha = 1;
+      if (m.telegraphKind === 'slam') {
+        // earthquake wind-up: a large growing danger ring on the ground you must leave
+        const t = 1 - m.telegraph / 0.6;
+        ctx.strokeStyle = '#e0a850'; ctx.lineWidth = 3; ctx.globalAlpha = 0.5 + 0.5 * Math.abs(Math.sin(Date.now()/50));
+        ctx.beginPath(); ctx.arc(sx, sy, 20 + t * 75, 0, 7); ctx.stroke();
+        ctx.globalAlpha = 0.2; ctx.fillStyle = '#e0a850';
+        ctx.beginPath(); ctx.arc(sx, sy, 20 + t * 75, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
+      } else {
+        const t = 1 - m.telegraph / 0.5;
+        ctx.strokeStyle = m.telegraphKind === 'toss' ? '#a88b63' : '#ffcf5c'; ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.4 + 0.6 * Math.abs(Math.sin(Date.now()/60));
+        ctx.beginPath(); ctx.arc(sx, sy, (dw/2) + 2 + t * 5, 0, 7); ctx.stroke(); ctx.globalAlpha = 1;
+      }
     }
     if (m.chargeState === 'dash') { ctx.shadowColor = m.color; ctx.shadowBlur = 14; }
     // face the player: flip horizontally if player is to the left

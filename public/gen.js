@@ -123,7 +123,7 @@ export function generateDungeon(seed, floor) {
 const MONSTER_ARCHETYPES = [
   { key: 'grub', name: 'Cave Grub', glyph: 'g', hpMul: 0.8, dmgMul: 0.7, spd: 0.95, color: '#8fae6b', behavior: 'chaser' },
   { key: 'skitter', name: 'Skitterling', glyph: 's', hpMul: 0.55, dmgMul: 0.9, spd: 1.55, color: '#c9a24b', behavior: 'charger' },
-  { key: 'brute', name: 'Stone Brute', glyph: 'B', hpMul: 2.0, dmgMul: 1.5, spd: 0.7, color: '#9a8f80', behavior: 'chaser', special: 'slam' },
+  { key: 'brute', name: 'Stone Brute', glyph: 'B', hpMul: 2.0, dmgMul: 1.5, spd: 0.7, color: '#9a8f80', behavior: 'chaser', special: 'slam', proj: 'cold' },
   { key: 'shade', name: 'Hollow Shade', glyph: 'h', hpMul: 1.1, dmgMul: 1.0, spd: 1.15, color: '#7d6bad', behavior: 'caster', proj: 'void' },
   { key: 'spitter', name: 'Blight Spitter', glyph: 'y', hpMul: 1.15, dmgMul: 1.0, spd: 0.9, color: '#7bbf5a', behavior: 'bomber', proj: 'poison' },
   { key: 'warden', name: 'Rift Warden', glyph: 'W', hpMul: 1.6, dmgMul: 1.2, spd: 1.05, color: '#c0596b', behavior: 'caster', proj: 'fire', special: 'volley' },
