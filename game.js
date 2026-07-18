@@ -2,6 +2,9 @@ import {
   makeRNG, hashSeed, subSeed, generateDungeon, generateMonsters, generateItem,
   starterWeapon, MAP_W, MAP_H, T, STATUS,
 } from './gen.js';
+import { buildSprites, sprites } from './sprites.js';
+
+const SPR = buildSprites();  // draw all pixel-art once, up front
 
 // ---------- STATUS ENGINE ----------
 // Any entity (player or monster) carries `.fx_status = {}` — a map of
@@ -717,78 +720,94 @@ function draw() {
   ctx.fillRect(0, 0, VIEW_TILES_X * TILE, VIEW_TILES_Y * TILE);
 
   const t0x = Math.floor(camX / TILE), t0y = Math.floor(camY / TILE);
+  // floor & special tiles
   for (let ty = t0y - 1; ty <= t0y + VIEW_TILES_Y + 1; ty++) {
     for (let tx = t0x - 1; tx <= t0x + VIEW_TILES_X + 1; tx++) {
       if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) continue;
       const cell = G.grid[ty][tx];
       if (cell === T.WALL) continue;
-      const sx = tx * TILE - camX, sy = ty * TILE - camY;
-      ctx.fillStyle = ((tx + ty) & 1) ? '#1c2130' : '#20263a';
-      ctx.fillRect(sx, sy, TILE, TILE);
-      if (cell === T.STAIRS) { ctx.fillStyle = '#f0b341'; ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center'; ctx.fillText('▼', sx + TILE/2, sy + TILE/2 + 5); }
-      if (cell === T.ENTRY) { ctx.fillStyle = '#6fe3c4'; ctx.font = '12px monospace'; ctx.textAlign = 'center'; ctx.fillText('△', sx + TILE/2, sy + TILE/2 + 4); }
+      const sx = Math.round(tx * TILE - camX), sy = Math.round(ty * TILE - camY);
+      // deterministic flagstone variant per tile
+      const variant = (tx * 7 + ty * 13) & 3;
+      ctx.drawImage(SPR.floor[variant], sx, sy, TILE, TILE);
+      if (cell === T.STAIRS) { const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 300); ctx.globalAlpha = pulse; ctx.drawImage(SPR.stairs, sx, sy, TILE, TILE); ctx.globalAlpha = 1; }
+      if (cell === T.ENTRY) ctx.drawImage(SPR.entry, sx, sy, TILE, TILE);
     }
   }
-  // subtle wall edges
-  ctx.strokeStyle = 'rgba(0,0,0,.4)';
+  // walls (drawn only where adjacent to floor, so interiors stay black = depth)
   for (let ty = t0y - 1; ty <= t0y + VIEW_TILES_Y + 1; ty++)
     for (let tx = t0x - 1; tx <= t0x + VIEW_TILES_X + 1; tx++) {
       if (tx<0||ty<0||tx>=MAP_W||ty>=MAP_H) continue;
       if (G.grid[ty][tx] !== T.WALL) continue;
-      // draw wall only where adjacent to floor (edge)
-      let edge=false; for (const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]) { const nx=tx+dx,ny=ty+dy; if(nx>=0&&ny>=0&&nx<MAP_W&&ny<MAP_H&&G.grid[ny][nx]!==T.WALL) edge=true; }
+      let edge=false; for (const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1],[1,-1],[-1,1]]) { const nx=tx+dx,ny=ty+dy; if(nx>=0&&ny>=0&&nx<MAP_W&&ny<MAP_H&&G.grid[ny][nx]!==T.WALL) edge=true; }
       if (!edge) continue;
-      const sx = tx*TILE-camX, sy=ty*TILE-camY;
-      ctx.fillStyle='#080a0f'; ctx.fillRect(sx,sy,TILE,TILE);
-      ctx.fillStyle='#161b28'; ctx.fillRect(sx,sy,TILE,3);
+      const sx = Math.round(tx*TILE-camX), sy=Math.round(ty*TILE-camY);
+      ctx.drawImage(SPR.wall, sx, sy, TILE, TILE);
     }
 
   // pickups
   for (const pu of G.pickups) {
-    const sx = pu.x*TILE+TILE/2-camX, sy=pu.y*TILE+TILE/2-camY;
-    ctx.beginPath();
-    if (pu.type==='gold'){ctx.fillStyle='#f0b341';ctx.arc(sx,sy,3+Math.sin(Date.now()/200)*.6,0,7);}
-    else {ctx.fillStyle='#ff5d6c';ctx.arc(sx,sy,4,0,7);}
-    ctx.fill();
+    const sx = Math.round(pu.x*TILE+TILE/2-camX), sy=Math.round(pu.y*TILE+TILE/2-camY + Math.sin(Date.now()/250 + pu.x)*1.5);
+    const spr = pu.type === 'gold' ? SPR.gold : SPR.hp;
+    ctx.shadowColor = pu.type === 'gold' ? '#f0b341' : '#ff5d6c'; ctx.shadowBlur = 6;
+    ctx.drawImage(spr, sx - 7, sy - 7);
+    ctx.shadowBlur = 0;
   }
-  // drops (glowing loot)
+  // drops (glowing loot with a light beam so they're findable)
   for (const d of G.drops) {
-    const sx=d.x*TILE+TILE/2-camX, sy=d.y*TILE+TILE/2-camY;
-    const glow=Math.sin(Date.now()/300)*1.5+3;
-    ctx.shadowColor=d.item.rarityColor; ctx.shadowBlur=10;
-    ctx.fillStyle=d.item.rarityColor;
-    ctx.fillRect(sx-4,sy-4+Math.sin(Date.now()/400)*2,8,8);
+    const sx=Math.round(d.x*TILE+TILE/2-camX), sy=Math.round(d.y*TILE+TILE/2-camY);
+    const bob = Math.sin(Date.now()/400 + d.x)*2;
+    const col = d.item.rarityColor;
+    // vertical light beam
+    const beam = ctx.createLinearGradient(0, sy-24, 0, sy+4);
+    beam.addColorStop(0, 'rgba(0,0,0,0)'); beam.addColorStop(1, col);
+    ctx.globalAlpha=.28; ctx.fillStyle=beam; ctx.fillRect(sx-3, sy-24, 6, 28); ctx.globalAlpha=1;
+    // gem
+    ctx.shadowColor=col; ctx.shadowBlur=10;
+    ctx.fillStyle=col;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy-5+bob); ctx.lineTo(sx+4, sy+bob); ctx.lineTo(sx, sy+5+bob); ctx.lineTo(sx-4, sy+bob); ctx.closePath();
+    ctx.fill();
     ctx.shadowBlur=0;
+    // facet highlight
+    ctx.fillStyle='rgba(255,255,255,.6)'; ctx.beginPath(); ctx.moveTo(sx,sy-5+bob); ctx.lineTo(sx+2,sy-1+bob); ctx.lineTo(sx,sy+bob); ctx.closePath(); ctx.fill();
   }
 
   // monsters
   for (const m of G.monsters) {
-    const sx=m.fx*TILE+TILE/2-camX, sy=m.fy*TILE+TILE/2-camY;
-    const size=m.boss?14:m.key==='brute'?11:8;
+    const sx=Math.round(m.fx*TILE+TILE/2-camX), sy=Math.round(m.fy*TILE+TILE/2-camY);
+    const spr = SPR.mob[m.key] || SPR.mob.grub;
+    const dw = m.boss ? 48 : 32, dh = dw;
+    const bob = Math.sin(Date.now()/220 + m.fx) * 1.2;   // idle bob
     // telegraph flash before a special attack — the player's cue to react
     if (m.telegraph > 0) {
       const t = 1 - m.telegraph / 0.5;
       ctx.strokeStyle = '#ffcf5c'; ctx.lineWidth = 2; ctx.globalAlpha = 0.4 + 0.6 * Math.abs(Math.sin(Date.now()/60));
-      ctx.beginPath(); ctx.arc(sx, sy, size + 5 + t * 4, 0, 7); ctx.stroke(); ctx.globalAlpha = 1;
+      ctx.beginPath(); ctx.arc(sx, sy, (dw/2) + 2 + t * 5, 0, 7); ctx.stroke(); ctx.globalAlpha = 1;
     }
-    // charger dash trail
-    if (m.chargeState === 'dash') { ctx.shadowColor = m.color; ctx.shadowBlur = 12; }
-    ctx.fillStyle=m.hitFlash>0?'#fff':m.color;
-    ctx.beginPath(); ctx.arc(sx,sy,size,0,7); ctx.fill(); ctx.shadowBlur=0;
-    ctx.fillStyle='#0b0d14'; ctx.font=`bold ${m.boss?14:10}px monospace`; ctx.textAlign='center';
-    ctx.fillText(m.glyph, sx, sy+(m.boss?5:3));
+    if (m.chargeState === 'dash') { ctx.shadowColor = m.color; ctx.shadowBlur = 14; }
+    // face the player: flip horizontally if player is to the left
+    const faceLeft = G.player.px < (m.fx*TILE+TILE/2);
+    ctx.save();
+    ctx.translate(sx, sy + bob);
+    if (faceLeft) ctx.scale(-1, 1);
+    ctx.drawImage(spr, -dw/2, -dh/2, dw, dh);
+    ctx.restore();
+    ctx.shadowBlur = 0;
+    // hit flash: white silhouette overlay using the sprite as a mask
+    if (m.hitFlash > 0) {
+      ctx.save(); ctx.globalAlpha = m.hitFlash / 0.15 * 0.8; ctx.globalCompositeOperation = 'lighter';
+      ctx.translate(sx, sy + bob); if (faceLeft) ctx.scale(-1,1);
+      ctx.drawImage(spr, -dw/2, -dh/2, dw, dh);
+      ctx.restore();
+    }
     // hp bar
-    if (m.hp < m.maxHp) { ctx.fillStyle='#2a0f16'; ctx.fillRect(sx-size,sy-size-6,size*2,3); ctx.fillStyle='#ff4b5c'; ctx.fillRect(sx-size,sy-size-6,size*2*(m.hp/m.maxHp),3); }
-    // status pips: small colored dots above the health bar
+    if (m.hp < m.maxHp) { const bw = dw*0.5; ctx.fillStyle='#2a0f16'; ctx.fillRect(sx-bw,sy-dh/2-2,bw*2,3); ctx.fillStyle='#ff4b5c'; ctx.fillRect(sx-bw,sy-dh/2-2,bw*2*(m.hp/m.maxHp),3); }
+    // status pips
     const st = activeStatusList(m);
-    if (st.length) {
-      st.slice(0, 4).forEach((s, i) => {
-        ctx.fillStyle = s.color;
-        ctx.beginPath(); ctx.arc(sx - size + 3 + i * 6, sy - size - 11, 2.4, 0, 7); ctx.fill();
-      });
-    }
-    // frozen overlay tint
-    if (hasStatus(m, 'freeze')) { ctx.fillStyle = 'rgba(120,210,255,.35)'; ctx.beginPath(); ctx.arc(sx, sy, size + 1, 0, 7); ctx.fill(); }
+    if (st.length) st.slice(0,4).forEach((s,i)=>{ ctx.fillStyle=s.color; ctx.beginPath(); ctx.arc(sx-dw*0.4+i*6, sy-dh/2-7, 2.4, 0, 7); ctx.fill(); });
+    // frozen tint
+    if (hasStatus(m,'freeze')) { ctx.fillStyle='rgba(120,210,255,.4)'; ctx.save(); ctx.translate(sx,sy+bob); if(faceLeft)ctx.scale(-1,1); ctx.globalCompositeOperation='source-atop'; ctx.drawImage(spr,-dw/2,-dh/2,dw,dh); ctx.restore(); }
   }
 
   // projectiles (player)
@@ -810,13 +829,21 @@ function draw() {
   for (const e of G.effects) drawEffect(e, camX, camY);
 
   // player
-  const psx=p.px-camX, psy=p.py-camY;
+  const psx=Math.round(p.px-camX), psy=Math.round(p.py-camY);
   if (p.invuln>0 && Math.floor(Date.now()/60)%2) {} else {
-    ctx.shadowColor='#6fe3c4'; ctx.shadowBlur=p.dashT>0?16:6;
-    ctx.fillStyle=p.hitFlash>0?'#ff5d6c':'#e7e3d4';
-    ctx.beginPath(); ctx.arc(psx,psy,7,0,7); ctx.fill(); ctx.shadowBlur=0;
-    // facing marker
-    ctx.fillStyle='#6fe3c4'; ctx.beginPath(); ctx.arc(psx+p.dir.x*8, psy+p.dir.y*8, 2.5, 0, 7); ctx.fill();
+    const bob = Math.sin(Date.now()/200) * 1;
+    ctx.shadowColor = p.dashT>0 ? '#6fe3c4' : (hasStatus(p,'rage') ? '#ff5d6c' : '#6fe3c4');
+    ctx.shadowBlur = p.dashT>0 ? 16 : 5;
+    const faceLeft = p.dir.x < -0.1;
+    ctx.save(); ctx.translate(psx, psy + bob); if (faceLeft) ctx.scale(-1,1);
+    ctx.drawImage(SPR.hero, -16, -18, 32, 32);
+    ctx.restore(); ctx.shadowBlur = 0;
+    // hit flash
+    if (p.hitFlash > 0) { ctx.save(); ctx.globalAlpha = p.hitFlash/0.2*0.7; ctx.globalCompositeOperation='lighter'; ctx.translate(psx,psy+bob); if(faceLeft)ctx.scale(-1,1); ctx.drawImage(SPR.hero,-16,-18,32,32); ctx.restore(); }
+    // small facing dot toward aim
+    ctx.fillStyle='#6fe3c4'; ctx.globalAlpha=.8; ctx.beginPath(); ctx.arc(psx+p.dir.x*11, psy+p.dir.y*11, 2, 0, 7); ctx.fill(); ctx.globalAlpha=1;
+    // shield buff ring
+    if (hasStatus(p,'shield')) { ctx.strokeStyle='#8fd1ff'; ctx.lineWidth=1.5; ctx.globalAlpha=.7; ctx.beginPath(); ctx.arc(psx,psy,14,0,7); ctx.stroke(); ctx.globalAlpha=1; }
   }
 
   // damage numbers
