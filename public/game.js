@@ -722,6 +722,14 @@ function openExtractChoice() {
   document.getElementById('extractModal').style.display = 'flex';
 }
 
+// End a run permanently: delete its server save and clear the local resume
+// pointer so it can't be reloaded (prevents banking essence then resuming).
+async function endRunPermanently() {
+  const id = G?.id;
+  localStorage.removeItem('seedspire_last');
+  if (id) { try { await fetch(`/api/save/${id}`, { method: 'DELETE', headers: Account.headers() }); } catch {} }
+}
+
 // Leave now: bank 100% and return to menu.
 async function extractLeave() {
   document.getElementById('extractModal').style.display = 'none';
@@ -729,6 +737,7 @@ async function extractLeave() {
   const res = await apiBankEssence(G.runEssence, 1.0);
   await fetch('/api/score', { method: 'POST', headers: Account.headers(),
     body: JSON.stringify({ name: Account.username || G.name, seed: G.seed, floor: G.floor, level: G.player.level }) }).catch(()=>{});
+  await endRunPermanently();
   showBankedSummary(res, true);
 }
 
@@ -751,6 +760,7 @@ async function gameOver() {
   if (Account.authed) res = await apiBankEssence(G.runEssence, 0.3);
   await fetch('/api/score', { method: 'POST', headers: Account.authed ? Account.headers() : { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: Account.username || G.name, seed: G.seed, floor: G.floor, level: G.player.level }) }).catch(()=>{});
+  await endRunPermanently();
   setTimeout(() => showBankedSummary(res, false), 1000);
 }
 
