@@ -173,6 +173,12 @@ app.get('/api/save/:id', (req, res) => {
   res.json({ seed: row.seed, state: JSON.parse(row.state), updated_at: row.updated_at });
 });
 
+// Delete a save so a finished run (extracted or died) can't be resumed.
+app.delete('/api/save/:id', (req, res) => {
+  db.prepare('DELETE FROM saves WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
 app.post('/api/score', auth(false), (req, res) => {
   const { name, seed, floor, level } = req.body || {};
   if (floor == null) return res.status(400).json({ error: 'invalid' });
