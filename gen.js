@@ -115,12 +115,18 @@ export function generateDungeon(seed, floor) {
 }
 
 // ---------- MONSTERS ----------
+// behavior drives AI in the client:
+//  chaser  - closes to melee range (now fast enough to threaten a kiting player)
+//  charger - keeps loose distance, then lunges in a fast dash to strike
+//  caster  - holds range and fires projectiles; retreats if you close in
+//  bomber  - advances while lobbing slow arcing shots, dangerous at mid-range
 const MONSTER_ARCHETYPES = [
-  { key: 'grub', name: 'Cave Grub', glyph: 'g', hpMul: 0.7, dmgMul: 0.6, spd: 0.8, color: '#8fae6b' },
-  { key: 'skitter', name: 'Skitterling', glyph: 's', hpMul: 0.6, dmgMul: 0.8, spd: 1.4, color: '#c9a24b' },
-  { key: 'brute', name: 'Stone Brute', glyph: 'B', hpMul: 1.8, dmgMul: 1.3, spd: 0.6, color: '#9a8f80' },
-  { key: 'shade', name: 'Hollow Shade', glyph: 'h', hpMul: 0.9, dmgMul: 1.1, spd: 1.0, color: '#7d6bad' },
-  { key: 'warden', name: 'Rift Warden', glyph: 'W', hpMul: 1.3, dmgMul: 1.2, spd: 0.9, color: '#c0596b' },
+  { key: 'grub', name: 'Cave Grub', glyph: 'g', hpMul: 0.8, dmgMul: 0.7, spd: 0.95, color: '#8fae6b', behavior: 'chaser' },
+  { key: 'skitter', name: 'Skitterling', glyph: 's', hpMul: 0.55, dmgMul: 0.9, spd: 1.55, color: '#c9a24b', behavior: 'charger' },
+  { key: 'brute', name: 'Stone Brute', glyph: 'B', hpMul: 2.0, dmgMul: 1.5, spd: 0.7, color: '#9a8f80', behavior: 'chaser', special: 'slam' },
+  { key: 'shade', name: 'Hollow Shade', glyph: 'h', hpMul: 0.85, dmgMul: 1.0, spd: 1.15, color: '#7d6bad', behavior: 'caster', proj: 'void' },
+  { key: 'spitter', name: 'Blight Spitter', glyph: 'y', hpMul: 0.9, dmgMul: 1.0, spd: 0.9, color: '#7bbf5a', behavior: 'bomber', proj: 'poison' },
+  { key: 'warden', name: 'Rift Warden', glyph: 'W', hpMul: 1.4, dmgMul: 1.2, spd: 1.05, color: '#c0596b', behavior: 'caster', proj: 'fire', special: 'volley' },
 ];
 
 export function generateMonsters(seed, floor, rooms) {
@@ -131,7 +137,13 @@ export function generateMonsters(seed, floor, rooms) {
     const room = rooms[i];
     const count = rng.int(0, Math.min(3, 1 + Math.floor(floor / 3)));
     for (let c = 0; c < count; c++) {
-      const arch = rng.weighted(MONSTER_ARCHETYPES.map((a) => ({ ...a, w: a.key === 'warden' ? 1 : 4 })));
+      // Wardens are rare; ranged types appear a bit more on deeper floors.
+      const arch = rng.weighted(MONSTER_ARCHETYPES.map((a) => ({
+        ...a,
+        w: a.key === 'warden' ? 1
+          : (a.behavior === 'caster' || a.behavior === 'bomber') ? 3 + Math.min(3, floor * 0.2)
+          : 4,
+      })));
       const level = floor + rng.int(-1, 1);
       const maxHp = Math.round((14 + level * 8) * arch.hpMul);
       const dmg = Math.round((3 + level * 2.2) * arch.dmgMul);
@@ -141,6 +153,7 @@ export function generateMonsters(seed, floor, rooms) {
         id: `m${floor}_${i}_${c}`, key: arch.key, name: arch.name, glyph: arch.glyph,
         color: arch.color, x, y, hp: maxHp, maxHp, dmg, spd: arch.spd, level: Math.max(1, level),
         xp: Math.round(6 + level * 4 * arch.hpMul),
+        behavior: arch.behavior, proj: arch.proj || null, special: arch.special || null,
       });
     }
   }
@@ -151,7 +164,8 @@ export function generateMonsters(seed, floor, rooms) {
     mobs.push({
       id: `boss${floor}`, key: 'boss', name: bossName(rng), glyph: 'Ω', color: '#e0b341',
       x: room.cx, y: room.cy, hp: (40 + level * 22), maxHp: (40 + level * 22),
-      dmg: Math.round(6 + level * 3), spd: 0.9, level, xp: 60 + level * 12, boss: true,
+      dmg: Math.round(6 + level * 3), spd: 1.0, level, xp: 60 + level * 12, boss: true,
+      behavior: 'boss', proj: rng.pick(['fire', 'void', 'poison']), special: 'volley',
     });
   }
   return mobs;

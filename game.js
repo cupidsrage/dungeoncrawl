@@ -60,9 +60,13 @@ function buildFloor(floor) {
   G.grid = d.grid;
   G.rooms = d.rooms;
   G.exit = d.exit;
-  G.monsters = generateMonsters(G.seed, floor, d.rooms).map((m) => ({ ...m, fx: m.x, fy: m.y, hitFlash: 0, aggro: false }));
+  G.monsters = generateMonsters(G.seed, floor, d.rooms).map((m) => ({
+    ...m, fx: m.x, fy: m.y, hitFlash: 0, aggro: false,
+    atkCd: G.rng.float(0.2, 1.0), chargeState: 'idle', chargeT: 0, telegraph: 0, cvx: 0, cvy: 0,
+  }));
   G.drops = [];       // ground loot {x,y,item}
-  G.projectiles = [];
+  G.projectiles = [];   // player projectiles
+  G.eproj = [];         // enemy projectiles
   G.effects = [];
   G.pickups = [];     // gold/hp orbs
   // Place player at entry.
@@ -289,6 +293,42 @@ function gainXp(amount) {
   }
 }
 
+// Player base move speed is ~120 u/s; MOB_SPD is tuned so a spd of 1.0 lands near
+// 78 u/s — fast enough that a straight-line kite no longer trivially works.
+const MOB_SPD = 78;
+const PROJ_COLORS = { fire: '#ff7a3c', cold: '#63c6ff', void: '#b46bff', poison: '#8fd14b', lightning: '#ffe14a' };
+
+// Slide a monster toward a target point (or away, if sign = -1). Axis-separated so
+// they hug walls instead of sticking. Returns true if it moved appreciably.
+function moveMob(m, tx, ty, unitsPerSec, dt, sign = 1) {
+  const mx = m.fx * TILE + TILE / 2, my = m.fy * TILE + TILE / 2;
+  const ang = Math.atan2((ty - my) * sign, (tx - mx) * sign);
+  const step = unitsPerSec * dt;
+  const nx = mx + Math.cos(ang) * step, ny = my + Math.sin(ang) * step;
+  let moved = false;
+  if (!isWall(Math.floor(nx / TILE), Math.floor(my / TILE))) { m.fx = (nx - TILE / 2) / TILE; moved = true; }
+  const cx = m.fx * TILE + TILE / 2;
+  if (!isWall(Math.floor(cx / TILE), Math.floor(ny / TILE))) { m.fy = (ny - TILE / 2) / TILE; moved = true; }
+  return moved;
+}
+
+// Enemy fires a projectile (or spread) at the player.
+function enemyShoot(m, mx, my, opts = {}) {
+  const p = G.player;
+  const baseAng = Math.atan2(p.py - my, p.px - mx);
+  const spread = opts.spread || 0, count = opts.count || 1, speed = opts.speed || 150;
+  const color = PROJ_COLORS[m.proj] || '#ff7a3c';
+  for (let i = 0; i < count; i++) {
+    const a = baseAng + (count > 1 ? (i - (count - 1) / 2) * spread : 0);
+    G.eproj.push({
+      x: mx, y: my, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
+      life: opts.life || 2.2, dmg: Math.round(m.dmg * (opts.dmgMul || 0.9)),
+      color, ptype: m.proj, r: 5, arc: opts.arc || false,
+    });
+  }
+  G.effects.push({ type: 'hit', x: mx, y: my, life: .15, t: 0, color });
+}
+
 // ---------- monster AI ----------
 function updateMonsters(dt) {
   const p = G.player;
@@ -296,23 +336,118 @@ function updateMonsters(dt) {
     const mx = m.fx * TILE + TILE / 2, my = m.fy * TILE + TILE / 2;
     const dist = Math.hypot(p.px - mx, p.py - my);
     if (m.hitFlash > 0) m.hitFlash -= dt;
-    if (dist < 160) m.aggro = true;
-    if (m.aggro && dist > 4) {
-      const slow = m.slowT > 0 ? 0.5 : 1;
-      const spd = m.spd * 42 * dt * slow;
-      const ang = Math.atan2(p.py - my, p.px - mx);
-      const nx = mx + Math.cos(ang) * spd, ny = my + Math.sin(ang) * spd;
-      // Move on each axis independently so monsters slide along walls instead of sticking.
-      if (!isWall(Math.floor(nx / TILE), Math.floor(my / TILE))) m.fx = (nx - TILE / 2) / TILE;
-      const cx = m.fx * TILE + TILE / 2;
-      if (!isWall(Math.floor(cx / TILE), Math.floor(ny / TILE))) m.fy = (ny - TILE / 2) / TILE;
+    if (m.telegraph > 0) m.telegraph -= dt;
+    if (m.atkCd > 0) m.atkCd -= dt;
+    if (dist < 220) m.aggro = true;
+    const slow = m.slowT > 0 ? 0.55 : 1;
+    const spd = m.spd * MOB_SPD * slow;
+
+    if (m.aggro) {
+      switch (m.behavior) {
+        case 'charger': {
+          // Skitterling: circle at mid-range, then wind up and dash straight through.
+          if (m.chargeState === 'idle') {
+            if (dist < 150 && m.atkCd <= 0) { m.chargeState = 'wind'; m.telegraph = 0.45; m.atkCd = 2.4; }
+            else if (dist > 70) moveMob(m, p.px, p.py, spd * 0.75, dt);   // approach
+            else moveMob(m, p.px, p.py, spd * 0.5, dt, -1);               // back off to reset spacing
+          } else if (m.chargeState === 'wind') {
+            if (m.telegraph <= 0) {
+              const a = Math.atan2(p.py - my, p.px - mx);
+              m.cvx = Math.cos(a); m.cvy = Math.sin(a);
+              m.chargeState = 'dash'; m.chargeT = 0.35;
+            }
+          } else if (m.chargeState === 'dash') {
+            m.chargeT -= dt;
+            const dashSpd = spd * 3.4;
+            const nx = mx + m.cvx * dashSpd * dt, ny = my + m.cvy * dashSpd * dt;
+            if (!isWall(Math.floor(nx / TILE), Math.floor(my / TILE))) m.fx = (nx - TILE / 2) / TILE; else m.chargeT = 0;
+            const cx = m.fx * TILE + TILE / 2;
+            if (!isWall(Math.floor(cx / TILE), Math.floor(ny / TILE))) m.fy = (ny - TILE / 2) / TILE; else m.chargeT = 0;
+            if (m.chargeT <= 0) m.chargeState = 'idle';
+          }
+          break;
+        }
+        case 'caster': {
+          // Shade / Warden: keep a shooting lane. Back off if crowded, approach if too far.
+          const ideal = 140;
+          if (dist < ideal - 40) moveMob(m, p.px, p.py, spd, dt, -1);       // retreat
+          else if (dist > ideal + 40) moveMob(m, p.px, p.py, spd * 0.9, dt); // close in
+          else moveMob(m, p.px + (my - p.py) * 0.3, p.py + (p.px - mx) * 0.3, spd * 0.5, dt); // strafe
+          if (dist < 260 && m.atkCd <= 0 && m.telegraph <= 0) { m.telegraph = 0.35; }
+          if (m.telegraph > 0 && m.telegraph - dt <= 0 && dist < 300) {
+            if (m.special === 'volley') enemyShoot(m, mx, my, { count: 3, spread: 0.28, speed: 165 });
+            else enemyShoot(m, mx, my, { speed: 175 });
+            m.atkCd = 1.6 + Math.random() * 0.6;
+          }
+          break;
+        }
+        case 'bomber': {
+          // Spitter: advance slowly, lob arcing shots at mid range.
+          if (dist > 90) moveMob(m, p.px, p.py, spd * 0.75, dt);
+          else if (dist < 55) moveMob(m, p.px, p.py, spd * 0.6, dt, -1);
+          if (dist < 240 && m.atkCd <= 0) { enemyShoot(m, mx, my, { speed: 120, arc: true, life: 2.6, dmgMul: 1.1 }); m.atkCd = 1.8; }
+          break;
+        }
+        case 'boss': {
+          // Boss: chases, periodic ranged volleys, occasional big slam telegraph.
+          if (dist > 40) moveMob(m, p.px, p.py, spd, dt);
+          if (m.atkCd <= 0) {
+            if (dist < 300) enemyShoot(m, mx, my, { count: 5, spread: 0.32, speed: 160, dmgMul: 0.8 });
+            m.atkCd = 2.0;
+          }
+          break;
+        }
+        default: { // chaser (grub, brute)
+          if (dist > 6) moveMob(m, p.px, p.py, spd, dt);
+          // Brute slam: telegraphed heavy hit with small radius.
+          if (m.special === 'slam' && dist < 46 && m.atkCd <= 0 && m.telegraph <= 0) { m.telegraph = 0.5; m.atkCd = 2.6; }
+          if (m.telegraph > 0 && m.telegraph - dt <= 0 && dist < 60) {
+            damagePlayer(Math.round(m.dmg * 1.8));
+            G.effects.push({ type: 'ring', x: mx, y: my, r: 0, maxR: 55, life: .3, t: 0, color: '#ff8a5c' });
+            screenShake(6);
+          }
+        }
+      }
     }
-    // attack on contact
-    if (dist < 18) { m.atkCd = (m.atkCd || 0) - dt; if (m.atkCd <= 0) { damagePlayer(m.dmg); m.atkCd = 0.8; } }
-    // status
+
+    // melee contact damage (all types can still hurt you on touch, but less than specials)
+    if (dist < 18 && m.behavior !== 'boss') {
+      if ((m.touchCd = (m.touchCd || 0) - dt) <= 0) {
+        damagePlayer(m.behavior === 'charger' && m.chargeState === 'dash' ? Math.round(m.dmg * 1.5) : m.dmg);
+        m.touchCd = 0.7;
+      }
+    } else if (dist < 20 && m.boss) {
+      if ((m.touchCd = (m.touchCd || 0) - dt) <= 0) { damagePlayer(m.dmg); m.touchCd = 0.6; }
+    }
+
+    // status effects
     if (m.burn > 0) { m.burn -= dt; m.burnTick = (m.burnTick || 0) - dt; if (m.burnTick <= 0) { damageMonster(m, Math.max(1, Math.round(m.burnDmg)), 'fire'); m.burnTick = 0.5; } }
     if (m.slowT > 0) m.slowT -= dt;
   }
+}
+
+// ---------- enemy projectiles ----------
+function updateEnemyProjectiles(dt) {
+  const p = G.player;
+  for (const pr of G.eproj) {
+    pr.x += pr.vx * dt; pr.y += pr.vy * dt; pr.life -= dt;
+    if (pr.arc) { pr.vx *= 0.985; pr.vy *= 0.985; } // arcing shots decelerate
+    if (isWall(Math.floor(pr.x / TILE), Math.floor(pr.y / TILE))) pr.life = 0;
+    if (Math.hypot(pr.x - p.px, pr.y - p.py) < 11) {
+      damagePlayer(pr.dmg);
+      if (pr.ptype === 'poison') { p.poisonT = 3; p.poisonDmg = pr.dmg * 0.12; }
+      if (pr.ptype === 'cold') p.chillT = 1.2;
+      G.effects.push({ type: 'hit', x: pr.x, y: pr.y, life: .18, t: 0, color: pr.color });
+      pr.life = 0;
+    }
+  }
+  G.eproj = G.eproj.filter((x) => x.life > 0);
+  // player damage-over-time from poison
+  if (p.poisonT > 0) {
+    p.poisonT -= dt; p.poisonTick = (p.poisonTick || 0) - dt;
+    if (p.poisonTick <= 0) { p.hp -= Math.max(1, p.poisonDmg); p.poisonTick = 0.5; if (p.hp <= 0) gameOver(); }
+  }
+  if (p.chillT > 0) p.chillT -= dt;
 }
 
 // ---------- projectiles ----------
@@ -452,7 +587,8 @@ function update(dt) {
   if (mag > 0) {
     mx /= mag; my /= mag;
     p.dir = { x: mx, y: my };
-    const speed = 120 * (1 + p.stats.moveSpeed) * (p.dashT > 0 ? 2.4 : 1);
+    const chill = p.chillT > 0 ? 0.6 : 1;
+    const speed = 120 * (1 + p.stats.moveSpeed) * (p.dashT > 0 ? 2.4 : 1) * chill;
     const nx = p.px + mx * speed * dt, ny = p.py + my * speed * dt;
     if (canMove(nx, p.py)) p.px = nx;
     if (canMove(p.px, ny)) p.py = ny;
@@ -474,6 +610,7 @@ function update(dt) {
 
   updateMonsters(dt);
   updateProjectiles(dt);
+  updateEnemyProjectiles(dt);
   updatePickups();
   checkStairs();
 
@@ -543,20 +680,36 @@ function draw() {
   // monsters
   for (const m of G.monsters) {
     const sx=m.fx*TILE+TILE/2-camX, sy=m.fy*TILE+TILE/2-camY;
-    ctx.fillStyle=m.hitFlash>0?'#fff':m.color;
     const size=m.boss?14:m.key==='brute'?11:8;
-    ctx.beginPath(); ctx.arc(sx,sy,size,0,7); ctx.fill();
+    // telegraph flash before a special attack — the player's cue to react
+    if (m.telegraph > 0) {
+      const t = 1 - m.telegraph / 0.5;
+      ctx.strokeStyle = '#ffcf5c'; ctx.lineWidth = 2; ctx.globalAlpha = 0.4 + 0.6 * Math.abs(Math.sin(Date.now()/60));
+      ctx.beginPath(); ctx.arc(sx, sy, size + 5 + t * 4, 0, 7); ctx.stroke(); ctx.globalAlpha = 1;
+    }
+    // charger dash trail
+    if (m.chargeState === 'dash') { ctx.shadowColor = m.color; ctx.shadowBlur = 12; }
+    ctx.fillStyle=m.hitFlash>0?'#fff':m.color;
+    ctx.beginPath(); ctx.arc(sx,sy,size,0,7); ctx.fill(); ctx.shadowBlur=0;
     ctx.fillStyle='#0b0d14'; ctx.font=`bold ${m.boss?14:10}px monospace`; ctx.textAlign='center';
     ctx.fillText(m.glyph, sx, sy+(m.boss?5:3));
     // hp bar
     if (m.hp < m.maxHp) { ctx.fillStyle='#2a0f16'; ctx.fillRect(sx-size,sy-size-6,size*2,3); ctx.fillStyle='#ff4b5c'; ctx.fillRect(sx-size,sy-size-6,size*2*(m.hp/m.maxHp),3); }
   }
 
-  // projectiles
+  // projectiles (player)
   for (const pr of G.projectiles) {
     const sx=pr.x-camX, sy=pr.y-camY;
     ctx.shadowColor=pr.color; ctx.shadowBlur=8; ctx.fillStyle=pr.color;
     ctx.beginPath(); ctx.arc(sx,sy,4,0,7); ctx.fill(); ctx.shadowBlur=0;
+  }
+  // projectiles (enemy) — drawn with a dark core so they read as incoming threats
+  for (const pr of G.eproj) {
+    const sx=pr.x-camX, sy=pr.y-camY;
+    ctx.shadowColor=pr.color; ctx.shadowBlur=9; ctx.fillStyle=pr.color;
+    ctx.beginPath(); ctx.arc(sx,sy,pr.r,0,7); ctx.fill();
+    ctx.shadowBlur=0; ctx.fillStyle='rgba(0,0,0,.45)';
+    ctx.beginPath(); ctx.arc(sx,sy,pr.r*0.45,0,7); ctx.fill();
   }
 
   // effects
