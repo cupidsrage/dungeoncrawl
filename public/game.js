@@ -1,8 +1,9 @@
 import {
   makeRNG, hashSeed, subSeed, generateDungeon, generateMonsters, generateItem,
-  starterWeapon, MAP_W, MAP_H, T, STATUS, ESSENCE_TIERS, ESSENCE_YIELD, ESSENCE_COLOR,
+  starterWeapon, starterWeaponAtTier, MAP_W, MAP_H, T, STATUS, ESSENCE_TIERS, ESSENCE_YIELD, ESSENCE_COLOR,
 } from './gen.js?v=5';
 import { buildSprites, sprites, frameFor } from './sprites.js?v=5';
+import { UPGRADES, UPGRADE_CATEGORIES, computeUpgradeEffects, nextCost } from './upgrades.js?v=5';
 
 // Build sprites up front. Wrapped so that if anything in the art pipeline throws
 // in a given browser, the game still boots (buttons still work) with fallback art.
@@ -45,13 +46,16 @@ const Account = {
   token: localStorage.getItem('seedspire_token') || null,
   username: null,
   essence: null,
+  upgrades: null,
   get authed() { return !!this.token; },
   headers() { return this.token ? { 'Authorization': `Bearer ${this.token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' }; },
   set(token, account) {
-    this.token = token; this.username = account.username; this.essence = account.essence;
+    this.token = token; this.username = account.username; this.essence = account.essence; this.upgrades = account.upgrades || {};
     localStorage.setItem('seedspire_token', token);
   },
-  clear() { this.token = null; this.username = null; this.essence = null; localStorage.removeItem('seedspire_token'); },
+  clear() { this.token = null; this.username = null; this.essence = null; this.upgrades = null; localStorage.removeItem('seedspire_token'); },
+  // Merged effect bag from all purchased upgrades (applied to a new run).
+  effects() { return computeUpgradeEffects(this.upgrades || {}); },
 };
 
 async function apiRegister(username, password) {
@@ -73,7 +77,7 @@ async function apiMe() {
   const r = await fetch('/api/me', { headers: Account.headers() });
   if (!r.ok) { Account.clear(); return null; }
   const data = await r.json();
-  Account.username = data.account.username; Account.essence = data.account.essence;
+  Account.username = data.account.username; Account.essence = data.account.essence; Account.upgrades = data.account.upgrades || {};
   return data.account;
 }
 async function apiLogout() {
@@ -88,6 +92,14 @@ async function apiBankEssence(amounts, keepFraction) {
   const data = await r.json();
   Account.essence = data.essence;
   return data;   // { essence, gained }
+}
+// Buy the next level of an upgrade. Server validates & deducts; returns new state.
+async function apiBuyUpgrade(id) {
+  const r = await fetch('/api/upgrade/buy', { method: 'POST', headers: Account.headers(), body: JSON.stringify({ id }) });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || 'Purchase failed');
+  Account.essence = data.essence; Account.upgrades = data.upgrades;
+  return data;
 }
 
 // ---------- STATUS ENGINE ----------
@@ -177,6 +189,14 @@ function recomputeStats() {
   for (const it of eq) for (const [k, v] of Object.entries(it.stats)) {
     if (s[k] != null && !['dmgLo', 'dmgHi', 'spd'].includes(k)) s[k] += v;
   }
+  // Account upgrade effects (permanent, from the Vault of Power).
+  const eff = G.upgradeEffects || computeUpgradeEffects({});
+  s.maxHp += eff.maxHp || 0;
+  s.armor += eff.armor || 0;
+  s.critChance += eff.critChance || 0;
+  s.cdr += eff.cdr || 0;
+  s.moveSpeed += eff.moveSpeed || 0;
+  s.dmgMul = eff.dmgMul || 1;          // applied to weapon+ability damage
   p.stats = s;
   p.maxHp = s.maxHp;
   if (p.hp > p.maxHp) p.hp = p.maxHp;
@@ -197,7 +217,7 @@ function weaponDamage() {
   const s = G.player.stats;
   let base = w ? (G.rng.int(w.stats.dmgLo, w.stats.dmgHi)) : G.rng.int(2, 4);
   base += s.flatDmg + s.fireDmg + s.coldDmg + s.lightningDmg;
-  return base;
+  return base * (s.dmgMul || 1);   // Might upgrade multiplier
 }
 
 // ---------- run setup ----------
@@ -225,17 +245,22 @@ function buildFloor(floor) {
   if (floor % 5 === 0) log('Something vast stirs below.', 'var(--danger)');
 }
 
-function newRun(seed, name) {
+function newRun(seed, name, startFloor = 1) {
   const numericSeed = hashSeed(seed);
+  // Account upgrade effects for this run (empty bag if not logged in).
+  const eff = Account.authed ? Account.effects() : computeUpgradeEffects({});
+  // Starter weapon: upgraded to a guaranteed rarity if the player bought Armory.
+  const starter = eff.starterTier ? starterWeaponAtTier(seed, eff.starterTier) : starterWeapon(seed);
   G = {
-    id: null, seed, name: name || 'Wanderer',
+    id: null, seed, name: name || 'Wanderer', upgradeEffects: eff,
     rng: makeRNG(numericSeed ^ 0x9e3779b9),
-    floor: 1, floorsCleared: 0, gold: 0, killCount: 0,
+    floor: 1, floorsCleared: 0, gold: eff.startGold || 0, killCount: 0,
     runEssence: { common: 0, uncommon: 0, rare: 0, epic: 0, legendary: 0 },  // banked at extract/death
     player: {
       px: 0, py: 0, hp: 100, maxHp: 100, level: 1, xp: 0, xpNext: 20,
       dir: { x: 0, y: 1 }, dashCd: 0, invuln: 0, hitFlash: 0,
-      equip: { weapon: starterWeapon(seed), weapon2: null, armor: null, trinket: null },
+      equip: { weapon: starter, weapon2: null, armor: null, trinket: null },
+      offhandUnlocked: !!eff.offhandUnlocked,
       bag: [], stats: {}, abilities: [],
     },
     grid: null, rooms: [], monsters: [], drops: [], projectiles: [], effects: [], pickups: [],
@@ -243,7 +268,8 @@ function newRun(seed, name) {
   };
   recomputeStats();
   G.player.hp = G.player.maxHp;
-  buildFloor(1);
+  buildFloor(startFloor);
+  if (startFloor > 1) log(`Deep start — descending straight to floor ${startFloor}.`, 'var(--accent)');
   renderAbilityBar();
 }
 
@@ -382,7 +408,7 @@ function fireAbility(idx, tx, ty) {
   const ang = Math.atan2(dy, dx);
   const cd = ab.cd * (1 - p.stats.cdr);
   ab.cdLeft = cd;
-  const dmgBase = ab.power + Math.floor(weaponDamage() * 0.5);
+  const dmgBase = Math.round((ab.power * (p.stats.dmgMul || 1)) + Math.floor(weaponDamage() * 0.5));
   const mk = (a) => ({
     x: p.px, y: p.py, vx: Math.cos(a) * 240, vy: Math.sin(a) * 240,
     life: ab.range * TILE / 240, color: ab.color, dmg: dmgBase, dtype: ab.dmgType,
@@ -459,7 +485,8 @@ function killMonster(m) {
   // loot roll
   const dropChance = m.boss ? 1 : 0.35;
   if (G.rng.chance(dropChance)) {
-    const item = generateItem(G.seed, `f${G.floor}_${m.id}_${G.killCount}`, G.floor, m.boss ? 1.5 : 0.2);
+    const mf = (m.boss ? 1.5 : 0.2) + (G.upgradeEffects?.magicFind || 0);
+    const item = generateItem(G.seed, `f${G.floor}_${m.id}_${G.killCount}`, G.floor, mf);
     G.drops.push({ x: m.fx, y: m.fy, item, fx: m.fx, fy: m.fy });
   }
   // gold + hp orbs (healing is scarcer now — you're meant to feel attrition)
@@ -1435,7 +1462,8 @@ document.getElementById('closeInv').onclick = toggleInv;
 function destroyItem(it) {
   const p = G.player;
   p.bag = p.bag.filter((x) => x !== it);
-  const gain = ESSENCE_YIELD[it.rarity] || 1;
+  const mul = G.upgradeEffects?.essenceMul || 1;
+  const gain = Math.round((ESSENCE_YIELD[it.rarity] || 1) * mul);
   G.runEssence[it.rarity] = (G.runEssence[it.rarity] || 0) + gain;
   log(`Destroyed ${it.name} → +${gain} ${it.rarity} essence`, ESSENCE_COLOR[it.rarity]);
   renderInv();
@@ -1444,11 +1472,13 @@ function destroyItem(it) {
 document.getElementById('sellJunk').onclick = () => {
   const p = G.player;
   const rank = { common:1, uncommon:2, rare:3, epic:4, legendary:5 };
+  const mul = G.upgradeEffects?.essenceMul || 1;
+  const bonus = G.upgradeEffects?.salvageBonus || 0;   // Greed: +1 per junk item
   const keep = [];
   let total = 0;
   for (const it of p.bag) {
     if (rank[it.rarity] <= 2) {   // common + uncommon
-      const gain = ESSENCE_YIELD[it.rarity] || 1;
+      const gain = Math.round((ESSENCE_YIELD[it.rarity] || 1) * mul) + bonus;
       G.runEssence[it.rarity] = (G.runEssence[it.rarity] || 0) + gain;
       total += gain;
     } else keep.push(it);
@@ -1508,11 +1538,11 @@ function equipItem(it) {
   const p = G.player;
   let slot;
   if (it.slot === 'weapon') {
-    // First weapon -> main hand. If main is full and off-hand is empty, a second
-    // weapon goes to the off-hand (granting a second ability). Otherwise it
-    // replaces the main-hand weapon.
+    // First weapon -> main hand. If the off-hand is unlocked (Dual Wield Training)
+    // and the main slot is full but off-hand empty, a second weapon goes there
+    // (granting a second ability). Otherwise it replaces the main-hand weapon.
     if (!p.equip.weapon) slot = 'weapon';
-    else if (!p.equip.weapon2) slot = 'weapon2';
+    else if (p.offhandUnlocked && !p.equip.weapon2) slot = 'weapon2';
     else slot = 'weapon';
   } else {
     slot = it.slot;
@@ -1562,9 +1592,15 @@ function escapeHtml(s){return String(s).replace(/[&<>"]/g,(c)=>({'&':'&amp;','<'
 document.getElementById('startBtn').onclick = () => {
   const seed = document.getElementById('seedInput').value.trim() || Math.random().toString(36).slice(2, 10);
   const name = Account.username || 'Wanderer';
+  // Deep-start: if the selector is showing and a deeper floor is chosen, begin there.
+  let startFloor = 1;
+  const dsRow = document.getElementById('deepStartRow');
+  if (dsRow.style.display !== 'none') {
+    startFloor = parseInt(document.getElementById('deepStartSelect').value, 10) || 1;
+  }
   document.getElementById('menu').style.display = 'none';
   document.getElementById('log').innerHTML = '';
-  newRun(seed, name);
+  newRun(seed, name, startFloor);
   saveRun();
 };
 document.getElementById('resumeBtn').onclick = async () => {
@@ -1617,8 +1653,87 @@ function renderAccount() {
     const e = Account.essence || {};
     v.innerHTML = `<div style="font-size:10px;letter-spacing:.1em;color:var(--dim);margin-bottom:4px">ESSENCE VAULT</div>` +
       ESSENCE_TIERS.map((t) => `<div class="vrow"><span style="color:${ESSENCE_COLOR[t]}">${t}</span><span>${e[t] || 0}</span></div>`).join('');
+    // Deep-start selector: only shown if the account has unlocked deep-start floors.
+    const eff = Account.effects();
+    const row = document.getElementById('deepStartRow');
+    const sel = document.getElementById('deepStartSelect');
+    if (eff.deepStarts.length) {
+      row.style.display = 'block';
+      const prev = sel.value;
+      sel.innerHTML = `<option value="1">Floor 1 — start fresh</option>` +
+        eff.deepStarts.map((f) => `<option value="${f}">Floor ${f} — deep start</option>`).join('');
+      if (prev) sel.value = prev;   // keep selection across re-renders
+    } else {
+      row.style.display = 'none';
+    }
   }
+  // if the hub is open, refresh it too
+  if (document.getElementById('hubModal').style.display === 'flex') renderHub();
 }
+
+// ---------- Vault of Power (upgrade hub) ----------
+let hubTab = 'stats';
+function openHub() {
+  document.getElementById('hubModal').style.display = 'flex';
+  renderHub();
+}
+function renderHub() {
+  const levels = Account.upgrades || {};
+  const ess = Account.essence || {};
+  // essence balance strip
+  document.getElementById('hubEssence').innerHTML = 'Essence — ' +
+    ESSENCE_TIERS.map((t) => `<span style="color:${ESSENCE_COLOR[t]}">${ess[t] || 0} ${t}</span>`).join(' · ');
+  // category tabs
+  const tabs = document.getElementById('hubTabs');
+  tabs.innerHTML = UPGRADE_CATEGORIES.map((c) =>
+    `<span class="htab ${c.key === hubTab ? 'active' : ''}" data-cat="${c.key}">${c.name}</span>`).join('');
+  tabs.querySelectorAll('.htab').forEach((el) => {
+    el.onclick = () => { hubTab = el.dataset.cat; renderHub(); };
+  });
+  // upgrade cards for the active category
+  const list = document.getElementById('hubList');
+  const items = UPGRADES.filter((u) => u.category === hubTab);
+  list.innerHTML = items.map((up) => {
+    const lvl = levels[up.id] || 0;
+    const maxed = lvl >= up.maxLevel;
+    const price = nextCost(up, levels);
+    const lockedByReq = up.requires && !(levels[up.requires] > 0);
+    // affordability
+    let afford = true;
+    if (price) for (const [t, amt] of Object.entries(price)) if ((ess[t] || 0) < amt) afford = false;
+    const costTxt = price
+      ? Object.entries(price).map(([t, amt]) => `<span style="color:${ESSENCE_COLOR[t]}">${amt} ${t}</span>`).join(' ')
+      : '';
+    const lvlTxt = up.maxLevel > 1 ? `LVL ${lvl}/${up.maxLevel}` : (lvl > 0 ? 'OWNED' : '');
+    let btn;
+    if (maxed) btn = `<button disabled>${up.maxLevel > 1 ? 'MAXED' : 'OWNED'}</button>`;
+    else if (lockedByReq) btn = `<button disabled>Locked</button>`;
+    else btn = `<button data-buy="${up.id}" ${afford ? '' : 'disabled'}>Buy</button>`;
+    return `<div class="upcard ${maxed ? 'maxed' : ''}">
+      <div class="upicon">${up.icon}</div>
+      <div class="upinfo">
+        <div class="upname">${up.name}</div>
+        <div class="updesc">${up.desc}${lockedByReq ? ' <span style="color:var(--danger)">(requires previous tier)</span>' : ''}</div>
+        ${lvlTxt ? `<div class="uplvl">${lvlTxt}</div>` : ''}
+      </div>
+      <div class="upbuy">
+        ${costTxt ? `<div class="upcost">${costTxt}</div>` : ''}
+        ${btn}
+      </div>
+    </div>`;
+  }).join('');
+  // wire buy buttons
+  list.querySelectorAll('button[data-buy]').forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true;
+      try { await apiBuyUpgrade(b.dataset.buy); renderHub(); renderAccount(); }
+      catch (e) { b.disabled = false; document.getElementById('hubEssence').innerHTML =
+        `<span style="color:var(--danger)">${e.message}</span>`; setTimeout(renderHub, 1200); }
+    };
+  });
+}
+document.getElementById('hubBtn').onclick = openHub;
+document.getElementById('hubClose').onclick = () => { document.getElementById('hubModal').style.display = 'none'; };
 
 // ---------- boot ----------
 resize();

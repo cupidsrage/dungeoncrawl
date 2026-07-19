@@ -100,6 +100,20 @@
     border:1px solid var(--line);border-radius:14px;padding:26px;box-shadow:0 30px 80px rgba(0,0,0,.6);text-align:center}
   .modaltag{font-size:11px;letter-spacing:.14em;color:var(--gold)}
   #vault .vrow{display:flex;justify-content:space-between;padding:2px 0;font-size:12px}
+  .upcard{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:12px}
+  .upcard .upicon{font-size:20px;width:32px;text-align:center;flex-shrink:0}
+  .upcard .upinfo{flex:1}
+  .upcard .upname{font-size:14px;font-weight:600}
+  .upcard .updesc{font-size:11.5px;color:var(--dim);margin-top:2px;line-height:1.4}
+  .upcard .uplvl{font-size:10px;color:var(--accent);letter-spacing:.08em;margin-top:3px}
+  .upcard .upbuy{flex-shrink:0;text-align:right}
+  .upcard .upcost{font-size:11px;margin-bottom:5px;white-space:nowrap}
+  .upcard button{padding:7px 14px;border:1px solid var(--accent);border-radius:8px;background:var(--panel);color:var(--accent);font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;transition:all .12s}
+  .upcard button:hover:not(:disabled){background:var(--accent);color:#06121a}
+  .upcard button:disabled{opacity:.4;cursor:not-allowed;border-color:var(--line);color:var(--dim)}
+  .upcard.maxed{opacity:.7}
+  #hubTabs .htab{font-size:12px;padding:6px 12px;border:1px solid var(--line);border-radius:20px;cursor:pointer;color:var(--dim)}
+  #hubTabs .htab.active{border-color:var(--accent);color:var(--accent)}
   #tooltip{position:fixed;z-index:60;pointer-events:none;display:none;max-width:260px;
     background:#0a0c12;border:1px solid var(--line);border-radius:10px;padding:11px 13px;font-size:12px;box-shadow:0 12px 40px rgba(0,0,0,.7)}
   #tooltip .tt-name{font-weight:700;margin-bottom:2px}
@@ -196,11 +210,16 @@
         <span class="pill" id="logoutBtn">Log out</span>
       </div>
       <div id="vault" style="margin-top:10px;font-size:12px;color:var(--dim)"></div>
+      <button class="btn ghost" id="hubBtn" style="margin-top:10px">⚡ VAULT OF POWER — spend essence</button>
     </div>
 
     <label for="seedInput" style="margin-top:16px">Seed <span style="text-transform:none;color:var(--dim)">(blank = random)</span></label>
     <input id="seedInput" placeholder="e.g. hollow-king" autocomplete="off" />
-    <button class="btn" id="startBtn">DESCEND</button>
+    <div id="deepStartRow" style="display:none;margin-top:10px">
+      <label>Start at</label>
+      <select id="deepStartSelect" style="width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);padding:11px 12px;border-radius:9px;font-family:inherit;font-size:14px"></select>
+    </div>
+    <button class="btn" id="startBtn" style="margin-top:12px">DESCEND</button>
     <div class="row" style="margin-top:10px">
       <button class="btn ghost" id="resumeBtn">Resume last run</button>
     </div>
@@ -229,6 +248,19 @@
     <h2 id="deathTitle" style="margin:0 0 10px;letter-spacing:.08em">YOU FELL</h2>
     <div id="deathBody" style="font-size:13px;line-height:1.6;margin-bottom:16px"></div>
     <button class="btn" id="deathOkBtn">RETURN TO SPIRE</button>
+  </div>
+</div>
+
+<!-- Vault of Power — upgrade hub -->
+<div id="hubModal" class="modal">
+  <div class="modalcard" style="width:min(680px,94vw);max-height:90vh;overflow:auto;text-align:left">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <h2 style="margin:0;letter-spacing:.1em">⚡ VAULT OF POWER</h2>
+      <span class="pill" id="hubClose">Close ✕</span>
+    </div>
+    <div id="hubEssence" style="font-size:12px;color:var(--dim);margin-bottom:14px"></div>
+    <div id="hubTabs" style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap"></div>
+    <div id="hubList"></div>
   </div>
 </div>
 

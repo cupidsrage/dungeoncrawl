@@ -442,3 +442,18 @@ export function starterWeapon(seed) {
   // Fallback: hand-built basic weapon.
   return generateItem(seed, 'starter0', 1, 0);
 }
+
+// Starter weapon guaranteed to be at least a given rarity (for the Armory upgrade).
+// Rerolls the salt with high magic-find until a weapon of the target tier drops.
+export function starterWeaponAtTier(seed, tier) {
+  const rank = { common:1, uncommon:2, rare:3, epic:4, legendary:5 };
+  const want = rank[tier] || 3;
+  let best = null;
+  for (let i = 0; i < 300; i++) {
+    const it = generateItem(seed, `starterT${i}`, 3, 2.5);   // ilvl 3, high magic find
+    if (it.slot !== 'weapon') continue;
+    if ((rank[it.rarity] || 1) >= want) return it;           // hit the target tier
+    if (!best || (rank[it.rarity] || 1) > (rank[best.rarity] || 1)) best = it;
+  }
+  return best || starterWeapon(seed);
+}
