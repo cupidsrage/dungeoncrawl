@@ -9,7 +9,7 @@
 
 // Cost helper: linear-ish growth per level, drawing from a given tier.
 function cost(tier, base, growth) {
-  return (nextLevel) => ({ [tier]: Math.round(base + growth * (nextLevel - 1)) });
+  return (nextLevel) => ({ [tier]: Math.round((base + growth * (nextLevel - 1)) * 2) });
 }
 
 export const UPGRADES = [
@@ -85,22 +85,22 @@ export const UPGRADES = [
     id: 'dualwield', name: 'Dual Wield Training', icon: '⚔⚔',
     desc: 'Start every run with the off-hand weapon slot ready to use.',
     category: 'unlocks', maxLevel: 1,
-    cost: () => ({ epic: 10 }),
+    cost: () => ({ epic: 20 }),
     effect: () => ({ offhandUnlocked: true }),
   },
   {
     id: 'armory', name: "Armorer's Cache", icon: '⬗',
     desc: 'Start each run with a guaranteed Rare-tier weapon instead of a Common one.',
     category: 'unlocks', maxLevel: 1,
-    cost: () => ({ epic: 8 }),
+    cost: () => ({ epic: 16 }),
     effect: () => ({ starterTier: 'rare' }),
   },
   {
     id: 'greed', name: 'Greed', icon: '★',
-    desc: 'Salvaging Common/Uncommon junk yields +1 essence each.',
+    desc: 'Bulk salvaging Common/Uncommon junk yields +1 bonus essence per 3 junk items.',
     category: 'unlocks', maxLevel: 1,
-    cost: () => ({ epic: 6 }),
-    effect: () => ({ salvageBonus: 1 }),
+    cost: () => ({ epic: 12 }),
+    effect: () => ({ salvageBonusEvery: 3 }),
   },
 
   // ---- HEROES (epic/legendary essence — one-time playable character unlocks) ----
@@ -108,21 +108,21 @@ export const UPGRADES = [
     id: 'char_ember', name: 'Ember Arcanist', icon: '🔥',
     desc: 'Unlock a caster who deals +25% fire damage, has +8% cooldown reduction, but -10 max HP.',
     category: 'characters', maxLevel: 1, characterId: 'ember',
-    cost: () => ({ epic: 12 }),
+    cost: () => ({ epic: 24 }),
     effect: () => ({ unlockedCharacters: ['ember'] }),
   },
   {
     id: 'char_iron', name: 'Iron Vanguard', icon: '🛡',
     desc: 'Unlock a stalwart delver with +35 max HP and +12 armor, but -6% move speed.',
     category: 'characters', maxLevel: 1, characterId: 'iron',
-    cost: () => ({ epic: 14 }),
+    cost: () => ({ epic: 28 }),
     effect: () => ({ unlockedCharacters: ['iron'] }),
   },
   {
     id: 'char_shade', name: 'Moonlit Shade', icon: '☾',
     desc: 'Unlock a swift assassin with +12% crit chance and +10% move speed, but -15 max HP.',
     category: 'characters', maxLevel: 1, characterId: 'shade',
-    cost: () => ({ legendary: 4 }),
+    cost: () => ({ legendary: 8 }),
     effect: () => ({ unlockedCharacters: ['shade'] }),
   },
 
@@ -133,21 +133,21 @@ export const UPGRADES = [
     id: 'descent5', name: 'Descent I', icon: '▼',
     desc: 'Unlock the option to start runs at Floor 5.',
     category: 'descent', maxLevel: 1, deepStartFloor: 5,
-    cost: () => ({ legendary: 3 }),
+    cost: () => ({ legendary: 6 }),
     effect: () => ({ deepStart: 5 }),
   },
   {
     id: 'descent10', name: 'Descent II', icon: '▼▼',
     desc: 'Unlock the option to start runs at Floor 10.',
     category: 'descent', maxLevel: 1, deepStartFloor: 10, requires: 'descent5',
-    cost: () => ({ legendary: 6 }),
+    cost: () => ({ legendary: 12 }),
     effect: () => ({ deepStart: 10 }),
   },
   {
     id: 'descent15', name: 'Descent III', icon: '▼▼▼',
     desc: 'Unlock the option to start runs at Floor 15.',
     category: 'descent', maxLevel: 1, deepStartFloor: 15, requires: 'descent10',
-    cost: () => ({ legendary: 10 }),
+    cost: () => ({ legendary: 20 }),
     effect: () => ({ deepStart: 15 }),
   },
 ];
@@ -166,7 +166,7 @@ export function computeUpgradeEffects(levels) {
   const eff = {
     maxHp: 0, dmgMul: 1, critChance: 0, cdr: 0, armor: 0, moveSpeed: 0,
     essenceMul: 1, magicFind: 0, startGold: 0,
-    offhandUnlocked: false, starterTier: null, salvageBonus: 0,
+    offhandUnlocked: false, starterTier: null, salvageBonusEvery: 0,
     deepStarts: [],   // sorted list of unlocked deep-start floors
     unlockedCharacters: ['wanderer'],
   };
