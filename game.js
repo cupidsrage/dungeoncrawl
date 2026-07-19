@@ -32,7 +32,13 @@ function makeFallbackSprites() {
       grub: mob('#8fae6b'), skitter: mob('#caa24b'), brute: mob('#8a8073'),
       shade: mob('#7d6bad'), spitter: mob('#6fa64a'), warden: mob('#b8505f'), boss: mob('#e0b341', true),
     },
-    hero: { frames: [solid(36, 36, '#e7e3d4'), solid(36, 36, '#e7e3d4')] },
+    hero: {
+      wanderer: { frames: [solid(36, 36, '#e7e3d4'), solid(36, 36, '#e7e3d4')] },
+      ember: { frames: [solid(36, 36, '#ff8a5c'), solid(36, 36, '#ff8a5c')] },
+      iron: { frames: [solid(36, 36, '#8fd1ff'), solid(36, 36, '#8fd1ff')] },
+      shade: { frames: [solid(36, 36, '#c86bff'), solid(36, 36, '#c86bff')] },
+      frames: [solid(36, 36, '#e7e3d4'), solid(36, 36, '#e7e3d4')],
+    },
     gold: solid(14, 14, '#f0b341'), hp: solid(14, 14, '#ff5d6c'),
   };
 }
@@ -1280,7 +1286,7 @@ function draw() {
     ctx.shadowColor = p.dashT>0 ? '#6fe3c4' : (hasStatus(p,'rage') ? '#ff5d6c' : '#6fe3c4');
     ctx.shadowBlur = p.dashT>0 ? 16 : 5;
     const faceLeft = p.dir.x < -0.1;
-    const hspr = frameFor(SPR.hero, p.moving ? Date.now()/60 : 0);  // faster stride while moving
+    const hspr = frameFor(SPR.hero?.[p.characterId] || SPR.hero?.wanderer || SPR.hero, p.moving ? Date.now()/60 : 0);  // faster stride while moving
     ctx.save(); ctx.translate(psx, psy + bob); if (faceLeft) ctx.scale(-1,1);
     ctx.drawImage(hspr, -18, -20, 36, 36);
     ctx.restore(); ctx.shadowBlur = 0;

@@ -191,6 +191,51 @@ function hero(g, f) {
   px(g, 10, 6, 4, 2, '#2a2a2a'); dot(g, 11, 6, '#8fd1ff'); dot(g, 13, 6, '#8fd1ff');
 }
 
+
+function emberHero(g, f) {
+  const robe = ramp('#5b2330', { hi: 0.32, lo: 0.36 });
+  const flame = f ? '#ffd070' : '#ff8a4c';
+  const step = f ? 1 : 0;
+  px(g, 8, 8, 8, 9, robe.mid);
+  px(g, 8, 8, 8, 2, robe.hi);
+  px(g, 7, 10, 2, 7 - step, robe.lo); px(g, 15, 10, 2, 7 + step, robe.lo);
+  px(g, 9, 16, 6, 3, robe.lo);
+  px(g, 9, 4, 6, 5, '#e0b07a');
+  px(g, 8, 2, 8, 3, '#ff7a3c');
+  px(g, 10, 1, 2, 2, flame); px(g, 13, 1 + step, 2, 2, flame);
+  px(g, 10, 6, 4, 2, '#2a120c'); dot(g, 11, 6, flame); dot(g, 13, 6, flame);
+  px(g, 5, 11, 2, 2, flame); px(g, 17, 11, 2, 2, flame);
+  dot(g, 5, 10, '#ffe0a0'); dot(g, 18, 10, '#ffe0a0');
+}
+
+function ironHero(g, f) {
+  const steel = ramp('#7d8fa3', { hi: 0.35, lo: 0.38 });
+  const trim = ramp('#d6b15f', { hi: 0.25, lo: 0.3 });
+  const yo = f ? 0 : 1;
+  px(g, 7, 7 + yo, 10, 10, steel.mid);
+  px(g, 7, 7 + yo, 10, 2, steel.hi);
+  px(g, 9, 3 + yo, 6, 5, steel.mid); px(g, 10, 2 + yo, 4, 1, steel.hi);
+  px(g, 6, 9 + yo, 2, 7, trim.mid); px(g, 16, 9 + yo, 2, 7, trim.mid);
+  px(g, 5, 11, 4, 6, '#5b6f86'); px(g, 4, 12, 1, 4, steel.hi);
+  px(g, 10, 16, 2, 4, steel.lo); px(g, 14, 16, 2, 4, steel.lo);
+  px(g, 10, 5 + yo, 4, 2, '#172232'); dot(g, 11, 5 + yo, '#8fd1ff'); dot(g, 13, 5 + yo, '#8fd1ff');
+  px(g, 12, 9 + yo, 1, 7, trim.hi);
+}
+
+function shadeHero(g, f) {
+  const cloth = ramp('#2b2545', { hi: 0.35, lo: 0.36 });
+  const moon = f ? '#f2eaff' : '#c86bff';
+  const step = f ? 1 : 0;
+  px(g, 9, 6, 6, 11, cloth.mid);
+  px(g, 8, 8, 8, 3, cloth.hi);
+  px(g, 7, 11, 3, 6 + step, cloth.lo); px(g, 14, 11, 3, 6 - step, cloth.lo);
+  px(g, 9, 3, 6, 5, '#181526'); px(g, 8, 5, 1, 3, '#181526'); px(g, 15, 5, 1, 3, '#181526');
+  px(g, 10, 6, 4, 2, '#08070d'); dot(g, 11, 6, moon); dot(g, 13, 6, moon);
+  px(g, 6, 14, 3, 1, moon); px(g, 15, 14, 3, 1, moon);
+  px(g, 10, 17, 2, 3 + step, cloth.lo); px(g, 13, 17, 2, 4 - step, cloth.lo);
+  dot(g, 12, 10, '#e6ccff');
+}
+
 // ---------- environment tiles ----------
 function floorTile(variant) {
   return make(40, 40, (g) => {
@@ -287,7 +332,13 @@ export function buildSprites() {
     cache.mob[key] = { frames: [renderCreature(painter, 0, GRID, DISP), renderCreature(painter, 1, GRID, DISP)] };
   }
   cache.mob.boss = { frames: [renderCreature(boss, 0, 36, 54), renderCreature(boss, 1, 36, 54)] };
-  cache.hero = { frames: [renderCreature(hero, 0, GRID, DISP), renderCreature(hero, 1, GRID, DISP)] };
+  cache.hero = {
+    wanderer: { frames: [renderCreature(hero, 0, GRID, DISP), renderCreature(hero, 1, GRID, DISP)] },
+    ember: { frames: [renderCreature(emberHero, 0, GRID, DISP), renderCreature(emberHero, 1, GRID, DISP)] },
+    iron: { frames: [renderCreature(ironHero, 0, GRID, DISP), renderCreature(ironHero, 1, GRID, DISP)] },
+    shade: { frames: [renderCreature(shadeHero, 0, GRID, DISP), renderCreature(shadeHero, 1, GRID, DISP)] },
+  };
+  cache.hero.frames = cache.hero.wanderer.frames;
 
   cache.gold = make(14, 14, (g) => goldCoin(g));
   cache.hp = make(14, 14, (g) => hpOrb(g));
