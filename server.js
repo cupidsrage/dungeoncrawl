@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { randomUUID, scryptSync, randomBytes, timingSafeEqual } from 'crypto';
+import { UPGRADES, nextCost } from './public/upgrades.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -38,6 +39,7 @@ db.exec(`
     pass_hash TEXT NOT NULL,
     pass_salt TEXT NOT NULL,
     essence TEXT NOT NULL DEFAULT '{}',
+    upgrades TEXT NOT NULL DEFAULT '{}',
     created_at INTEGER NOT NULL
   );
   CREATE TABLE IF NOT EXISTS sessions (
@@ -64,6 +66,9 @@ db.exec(`
 // Migrate: add account_id to saves if an older DB predates it.
 try { db.prepare('SELECT account_id FROM saves LIMIT 1').get(); }
 catch { db.exec('ALTER TABLE saves ADD COLUMN account_id TEXT'); }
+// Migrate: add upgrades column to accounts if an older DB predates it.
+try { db.prepare('SELECT upgrades FROM accounts LIMIT 1').get(); }
+catch { db.exec("ALTER TABLE accounts ADD COLUMN upgrades TEXT NOT NULL DEFAULT '{}'"); }
 
 const TIERS = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
 
@@ -90,7 +95,7 @@ function auth(required) {
     if (token) {
       const sess = db.prepare('SELECT account_id FROM sessions WHERE token = ?').get(token);
       if (sess) {
-        req.account = db.prepare('SELECT id, username, essence FROM accounts WHERE id = ?').get(sess.account_id);
+        req.account = db.prepare('SELECT id, username, essence, upgrades FROM accounts WHERE id = ?').get(sess.account_id);
       }
     }
     if (required && !req.account) return res.status(401).json({ error: 'auth required' });
@@ -100,7 +105,8 @@ function auth(required) {
 function emptyEssence() { return TIERS.reduce((o, t) => (o[t] = 0, o), {}); }
 function accountPayload(acc) {
   const essence = { ...emptyEssence(), ...JSON.parse(acc.essence || '{}') };
-  return { username: acc.username, essence };
+  const upgrades = JSON.parse(acc.upgrades || '{}');
+  return { username: acc.username, essence, upgrades };
 }
 
 // ---------- account routes ----------
@@ -119,7 +125,7 @@ app.post('/api/register', (req, res) => {
               VALUES (?, ?, ?, ?, ?, ?, ?)`)
     .run(id, username, username.toLowerCase(), hash, salt, JSON.stringify(emptyEssence()), Date.now());
   const token = newSession(id);
-  const acc = db.prepare('SELECT id, username, essence FROM accounts WHERE id = ?').get(id);
+  const acc = db.prepare('SELECT id, username, essence, upgrades FROM accounts WHERE id = ?').get(id);
   res.json({ token, account: accountPayload(acc) });
 });
 
@@ -161,6 +167,30 @@ app.post('/api/essence/bank', auth(true), (req, res) => {
   }
   db.prepare('UPDATE accounts SET essence = ? WHERE id = ?').run(JSON.stringify(cur), req.account.id);
   res.json({ essence: cur, gained });
+});
+
+// Purchase the next level of an upgrade. Server is authoritative: it looks up the
+// real cost from the shared catalog, checks the player can afford it and meets any
+// prerequisite, deducts essence, and increments the level. The client cannot set
+// its own price or grant itself upgrades.
+app.post('/api/upgrade/buy', auth(true), (req, res) => {
+  const { id } = req.body || {};
+  const up = UPGRADES.find((u) => u.id === id);
+  if (!up) return res.status(400).json({ error: 'Unknown upgrade.' });
+  const essence = { ...emptyEssence(), ...JSON.parse(req.account.essence || '{}') };
+  const upgrades = JSON.parse(req.account.upgrades || '{}');
+  const price = nextCost(up, upgrades);
+  if (!price) return res.status(400).json({ error: 'Already maxed or prerequisite not met.' });
+  // affordability
+  for (const [tier, amt] of Object.entries(price)) {
+    if ((essence[tier] || 0) < amt) return res.status(400).json({ error: `Not enough ${tier} essence.` });
+  }
+  // deduct + apply
+  for (const [tier, amt] of Object.entries(price)) essence[tier] -= amt;
+  upgrades[id] = (upgrades[id] || 0) + 1;
+  db.prepare('UPDATE accounts SET essence = ?, upgrades = ? WHERE id = ?')
+    .run(JSON.stringify(essence), JSON.stringify(upgrades), req.account.id);
+  res.json({ essence, upgrades });
 });
 
 // ---------- run routes (now account-aware) ----------
