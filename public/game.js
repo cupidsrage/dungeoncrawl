@@ -3,7 +3,7 @@ import {
   starterWeapon, starterWeaponAtTier, MAP_W, MAP_H, T, STATUS, ESSENCE_TIERS, ESSENCE_YIELD, ESSENCE_COLOR,
 } from './gen.js?v=5';
 import { buildSprites, sprites, frameFor } from './sprites.js?v=5';
-import { UPGRADES, UPGRADE_CATEGORIES, computeUpgradeEffects, nextCost } from './upgrades.js?v=5';
+import { UPGRADES, UPGRADE_CATEGORIES, availableCharacters, characterById, computeUpgradeEffects, nextCost } from './upgrades.js?v=6';
 
 // Build sprites up front. Wrapped so that if anything in the art pipeline throws
 // in a given browser, the game still boots (buttons still work) with fallback art.
@@ -47,6 +47,7 @@ const Account = {
   username: null,
   essence: null,
   upgrades: null,
+  selectedCharacter: localStorage.getItem('seedspire_character') || 'wanderer',
   get authed() { return !!this.token; },
   headers() { return this.token ? { 'Authorization': `Bearer ${this.token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' }; },
   set(token, account) {
@@ -56,6 +57,11 @@ const Account = {
   clear() { this.token = null; this.username = null; this.essence = null; this.upgrades = null; localStorage.removeItem('seedspire_token'); },
   // Merged effect bag from all purchased upgrades (applied to a new run).
   effects() { return computeUpgradeEffects(this.upgrades || {}); },
+  setCharacter(id) {
+    const owned = availableCharacters(this.upgrades || {}).some((c) => c.id === id);
+    this.selectedCharacter = owned ? id : 'wanderer';
+    localStorage.setItem('seedspire_character', this.selectedCharacter);
+  },
 };
 
 async function apiRegister(username, password) {
@@ -196,6 +202,14 @@ function recomputeStats() {
   s.critChance += eff.critChance || 0;
   s.cdr += eff.cdr || 0;
   s.moveSpeed += eff.moveSpeed || 0;
+  const hero = characterById(p.characterId);
+  const heroEff = hero.effects || {};
+  s.maxHp += heroEff.maxHp || 0;
+  s.armor += heroEff.armor || 0;
+  s.critChance += heroEff.critChance || 0;
+  s.cdr += heroEff.cdr || 0;
+  s.moveSpeed += heroEff.moveSpeed || 0;
+  s.fireDmgMul = heroEff.fireDmgMul || 1;
   s.dmgMul = eff.dmgMul || 1;          // applied to weapon+ability damage
   p.stats = s;
   p.maxHp = s.maxHp;
@@ -216,7 +230,7 @@ function weaponDamage() {
   const w = G.player.equip.weapon;
   const s = G.player.stats;
   let base = w ? (G.rng.int(w.stats.dmgLo, w.stats.dmgHi)) : G.rng.int(2, 4);
-  base += s.flatDmg + s.fireDmg + s.coldDmg + s.lightningDmg;
+  base += s.flatDmg + (s.fireDmg * (s.fireDmgMul || 1)) + s.coldDmg + s.lightningDmg;
   return base * (s.dmgMul || 1);   // Might upgrade multiplier
 }
 
@@ -250,6 +264,9 @@ function newRun(seed, name, startFloor = 1) {
   // Account upgrade effects for this run (empty bag if not logged in).
   const eff = Account.authed ? Account.effects() : computeUpgradeEffects({});
   // Starter weapon: upgraded to a guaranteed rarity if the player bought Armory.
+  const ownedCharacters = eff.unlockedCharacters || ['wanderer'];
+  const selectedCharacter = ownedCharacters.includes(Account.selectedCharacter) ? Account.selectedCharacter : 'wanderer';
+  Account.setCharacter(selectedCharacter);
   const starter = eff.starterTier ? starterWeaponAtTier(seed, eff.starterTier) : starterWeapon(seed);
   G = {
     id: null, seed, name: name || 'Wanderer', upgradeEffects: eff,
@@ -258,6 +275,7 @@ function newRun(seed, name, startFloor = 1) {
     runEssence: { common: 0, uncommon: 0, rare: 0, epic: 0, legendary: 0 },  // banked at extract/death
     player: {
       px: 0, py: 0, hp: 100, maxHp: 100, level: 1, xp: 0, xpNext: 20,
+      characterId: selectedCharacter,
       dir: { x: 0, y: 1 }, dashCd: 0, invuln: 0, hitFlash: 0,
       equip: { weapon: starter, weapon2: null, armor: null, trinket: null },
       offhandUnlocked: !!eff.offhandUnlocked,
@@ -280,7 +298,7 @@ async function saveRun() {
     floor: G.floor, gold: G.gold, killCount: G.killCount, floorsCleared: G.floorsCleared,
     player: {
       hp: G.player.hp, level: G.player.level, xp: G.player.xp, xpNext: G.player.xpNext,
-      equip: G.player.equip, bag: G.player.bag,
+      equip: G.player.equip, bag: G.player.bag, characterId: G.player.characterId,
     },
   };
   try {
@@ -306,7 +324,7 @@ async function loadRun() {
     Object.assign(G, { gold: state.gold, killCount: state.killCount, floorsCleared: state.floorsCleared });
     Object.assign(G.player, {
       level: state.player.level, xp: state.player.xp, xpNext: state.player.xpNext,
-      equip: state.player.equip, bag: state.player.bag,
+      equip: state.player.equip, bag: state.player.bag, characterId: state.player.characterId || 'wanderer',
     });
     recomputeStats();
     G.player.hp = state.player.hp;
@@ -1374,14 +1392,15 @@ function draw() {
     ctx.shadowColor = p.dashT>0 ? '#6fe3c4' : (hasStatus(p,'rage') ? '#ff5d6c' : '#6fe3c4');
     ctx.shadowBlur = p.dashT>0 ? 16 : 5;
     const faceLeft = p.dir.x < -0.1;
+    const hero = characterById(p.characterId);
     const hspr = frameFor(SPR.hero, p.moving ? Date.now()/60 : 0);  // faster stride while moving
     ctx.save(); ctx.translate(psx, psy + bob); if (faceLeft) ctx.scale(-1,1);
     ctx.drawImage(hspr, -18, -20, 36, 36);
     ctx.restore(); ctx.shadowBlur = 0;
     // hit flash
     if (p.hitFlash > 0) { ctx.save(); ctx.globalAlpha = p.hitFlash/0.2*0.7; ctx.globalCompositeOperation='lighter'; ctx.translate(psx,psy+bob); if(faceLeft)ctx.scale(-1,1); ctx.drawImage(hspr,-18,-20,36,36); ctx.restore(); }
-    // small facing dot toward aim
-    ctx.fillStyle='#6fe3c4'; ctx.globalAlpha=.8; ctx.beginPath(); ctx.arc(psx+p.dir.x*11, psy+p.dir.y*11, 2, 0, 7); ctx.fill(); ctx.globalAlpha=1;
+    // small facing dot toward aim, tinted by selected character
+    ctx.fillStyle=hero.color || '#6fe3c4'; ctx.globalAlpha=.8; ctx.beginPath(); ctx.arc(psx+p.dir.x*11, psy+p.dir.y*11, 2, 0, 7); ctx.fill(); ctx.globalAlpha=1;
     // shield buff ring
     if (hasStatus(p,'shield')) { ctx.strokeStyle='#8fd1ff'; ctx.lineWidth=1.5; ctx.globalAlpha=.7; ctx.beginPath(); ctx.arc(psx,psy,14,0,7); ctx.stroke(); ctx.globalAlpha=1; }
   }
@@ -1657,6 +1676,11 @@ function renderAccount() {
     const eff = Account.effects();
     const row = document.getElementById('deepStartRow');
     const sel = document.getElementById('deepStartSelect');
+    const chars = availableCharacters(Account.upgrades || {});
+    if (!chars.some((c) => c.id === Account.selectedCharacter)) Account.setCharacter('wanderer');
+    v.innerHTML += `<div style="font-size:10px;letter-spacing:.1em;color:var(--dim);margin:10px 0 4px">CHARACTER</div>` +
+      `<select id="characterSelect" style="width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);padding:9px 10px;border-radius:9px;font-family:inherit;font-size:12px">${chars.map((c) => `<option value="${c.id}" ${c.id === Account.selectedCharacter ? 'selected' : ''}>${c.icon} ${c.name} — ${c.desc}</option>`).join('')}</select>`;
+    document.getElementById('characterSelect').onchange = (ev) => { Account.setCharacter(ev.target.value); renderAccount(); };
     if (eff.deepStarts.length) {
       row.style.display = 'block';
       const prev = sel.value;

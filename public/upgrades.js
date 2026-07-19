@@ -103,6 +103,29 @@ export const UPGRADES = [
     effect: () => ({ salvageBonus: 1 }),
   },
 
+  // ---- HEROES (epic/legendary essence — one-time playable character unlocks) ----
+  {
+    id: 'char_ember', name: 'Ember Arcanist', icon: '🔥',
+    desc: 'Unlock a caster who deals +25% fire damage, has +8% cooldown reduction, but -10 max HP.',
+    category: 'characters', maxLevel: 1, characterId: 'ember',
+    cost: () => ({ epic: 12 }),
+    effect: () => ({ unlockedCharacters: ['ember'] }),
+  },
+  {
+    id: 'char_iron', name: 'Iron Vanguard', icon: '🛡',
+    desc: 'Unlock a stalwart delver with +35 max HP and +12 armor, but -6% move speed.',
+    category: 'characters', maxLevel: 1, characterId: 'iron',
+    cost: () => ({ epic: 14 }),
+    effect: () => ({ unlockedCharacters: ['iron'] }),
+  },
+  {
+    id: 'char_shade', name: 'Moonlit Shade', icon: '☾',
+    desc: 'Unlock a swift assassin with +12% crit chance and +10% move speed, but -15 max HP.',
+    category: 'characters', maxLevel: 1, characterId: 'shade',
+    cost: () => ({ legendary: 4 }),
+    effect: () => ({ unlockedCharacters: ['shade'] }),
+  },
+
   // ---- DEEP START (legendary essence — the big-ticket progression) ----
   // Each tier lets you optionally begin a run on that floor. Purchases are
   // cumulative — buying "floor 10" implies you can also pick floor 5 or floor 1.
@@ -133,6 +156,7 @@ export const UPGRADE_CATEGORIES = [
   { key: 'stats', name: 'Attributes' },
   { key: 'utility', name: 'Fortune' },
   { key: 'unlocks', name: 'Unlocks' },
+  { key: 'characters', name: 'Characters' },
   { key: 'descent', name: 'Deep Descent' },
 ];
 
@@ -144,6 +168,7 @@ export function computeUpgradeEffects(levels) {
     essenceMul: 1, magicFind: 0, startGold: 0,
     offhandUnlocked: false, starterTier: null, salvageBonus: 0,
     deepStarts: [],   // sorted list of unlocked deep-start floors
+    unlockedCharacters: ['wanderer'],
   };
   for (const up of UPGRADES) {
     const lvl = levels?.[up.id] || 0;
@@ -151,6 +176,7 @@ export function computeUpgradeEffects(levels) {
     const e = up.effect(lvl);
     for (const [k, v] of Object.entries(e)) {
       if (k === 'deepStart') { eff.deepStarts.push(v); }
+      else if (k === 'unlockedCharacters') { eff.unlockedCharacters.push(...v); }
       else if (typeof v === 'boolean') { eff[k] = eff[k] || v; }
       else if (['dmgMul', 'essenceMul'].includes(k)) { eff[k] *= v; }
       else if (k === 'starterTier') { eff.starterTier = v; }
@@ -158,6 +184,7 @@ export function computeUpgradeEffects(levels) {
     }
   }
   eff.deepStarts.sort((a, b) => a - b);
+  eff.unlockedCharacters = [...new Set(eff.unlockedCharacters)];
   return eff;
 }
 
@@ -168,4 +195,37 @@ export function nextCost(up, levels) {
   if (cur >= up.maxLevel) return null;
   if (up.requires && !(levels?.[up.requires] > 0)) return null;
   return up.cost(cur + 1);
+}
+
+
+export const CHARACTERS = [
+  {
+    id: 'wanderer', name: 'Wanderer', icon: '◆', color: '#6fe3c4',
+    desc: 'Balanced adventurer with no strengths or weaknesses.',
+    effects: {},
+  },
+  {
+    id: 'ember', name: 'Ember Arcanist', icon: '🔥', color: '#ff8a5c',
+    desc: '+25% fire damage and +8% cooldown reduction, but -10 max HP.',
+    effects: { fireDmgMul: 1.25, cdr: 0.08, maxHp: -10 },
+  },
+  {
+    id: 'iron', name: 'Iron Vanguard', icon: '🛡', color: '#8fd1ff',
+    desc: '+35 max HP and +12 armor, but -6% move speed.',
+    effects: { maxHp: 35, armor: 12, moveSpeed: -0.06 },
+  },
+  {
+    id: 'shade', name: 'Moonlit Shade', icon: '☾', color: '#c86bff',
+    desc: '+12% crit chance and +10% move speed, but -15 max HP.',
+    effects: { critChance: 0.12, moveSpeed: 0.10, maxHp: -15 },
+  },
+];
+
+export function availableCharacters(levels) {
+  const eff = computeUpgradeEffects(levels || {});
+  return CHARACTERS.filter((c) => eff.unlockedCharacters.includes(c.id));
+}
+
+export function characterById(id) {
+  return CHARACTERS.find((c) => c.id === id) || CHARACTERS[0];
 }
