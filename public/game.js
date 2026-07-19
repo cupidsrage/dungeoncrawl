@@ -209,6 +209,7 @@ function buildFloor(floor) {
   G.drops = [];       // ground loot {x,y,item}
   G.projectiles = [];   // player projectiles
   G.eproj = [];         // enemy projectiles
+  G.novaRings = [];     // expanding nova ring pulses
   G.effects = [];
   G.pickups = [];     // gold/hp orbs
   // Place player at entry.
@@ -384,11 +385,22 @@ function fireAbility(idx, tx, ty) {
   });
 
   if (ab.aoe && ab.shape === 'nova') {
-    for (let i = 0; i < 12; i++) G.projectiles.push(mk((i / 12) * Math.PI * 2));
-    G.effects.push({ type: 'ring', x: p.px, y: p.py, r: 0, maxR: ab.range * TILE, life: .35, t: 0, color: ab.color });
+    // Solid expanding ring of force — not projectile balls. It sweeps outward and
+    // damages every enemy the ring front passes over, once each.
+    const maxR = Math.max(90, ab.range * TILE);
+    G.novaRings = G.novaRings || [];
+    G.novaRings.push({
+      x: p.px, y: p.py, r: 6, maxR, speed: 320, dmg: dmgBase, dtype: ab.dmgType,
+      color: ab.color, onHit: ab.onHit, lifesteal: ab.lifesteal, hitSet: new Set(),
+    });
+    G.effects.push({ type: 'ring', x: p.px, y: p.py, r: 0, maxR, life: .35, t: 0, color: ab.color });
   } else if (ab.shape === 'cleave') {
-    for (let i = -2; i <= 2; i++) G.projectiles.push(Object.assign(mk(ang + i * 0.22), { life: 0.18, vx: Math.cos(ang + i * 0.22) * 200, vy: Math.sin(ang + i * 0.22) * 200 }));
-    G.effects.push({ type: 'arc', x: p.px, y: p.py, ang, life: .2, t: 0, color: ab.color });
+    // Wide arc in front, with more reach than before.
+    for (let i = -2; i <= 2; i++) {
+      const a = ang + i * 0.24;
+      G.projectiles.push(Object.assign(mk(a), { life: 0.34, vx: Math.cos(a) * 240, vy: Math.sin(a) * 240 }));
+    }
+    G.effects.push({ type: 'arc', x: p.px, y: p.py, ang, life: .22, t: 0, color: ab.color });
   } else if (ab.multi > 1) {
     for (let i = 0; i < ab.multi; i++) { const a = ang + (i - (ab.multi - 1) / 2) * 0.16; G.projectiles.push(mk(a)); }
   } else {
@@ -921,6 +933,29 @@ function updateProjectiles(dt) {
   G.projectiles = G.projectiles.filter((p2) => p2.life > 0);
 }
 
+// Expanding nova rings: each grows outward; any enemy whose distance from the
+// ring's center falls within the ring front (a band) takes damage once.
+function updateNovaRings(dt) {
+  const p = G.player;
+  if (!G.novaRings) return;
+  for (const ring of G.novaRings) {
+    ring.r += ring.speed * dt;
+    const band = 16;   // thickness of the damaging ring front
+    for (const m of G.monsters) {
+      if (ring.hitSet.has(m.id)) continue;
+      const mx = m.fx * TILE + TILE / 2, my = m.fy * TILE + TILE / 2;
+      const d = Math.hypot(mx - ring.x, my - ring.y);
+      if (d <= ring.r + band && d >= ring.r - band) {
+        ring.hitSet.add(m.id);
+        damageMonster(m, ring.dmg, ring.dtype, ring.onHit);
+        if (ring.lifesteal) p.hp = Math.min(p.maxHp, p.hp + ring.dmg * ring.lifesteal);
+        G.effects.push({ type: 'hit', x: mx, y: my, life: .18, t: 0, color: ring.color });
+      }
+    }
+  }
+  G.novaRings = G.novaRings.filter((r) => r.r < r.maxR);
+}
+
 // ---------- pickups / loot ----------
 function updatePickups() {
   const p = G.player;
@@ -1131,6 +1166,7 @@ function update(dt) {
 
   updateMonsters(dt);
   updateProjectiles(dt);
+  updateNovaRings(dt);
   updateEnemyProjectiles(dt);
   updatePickups();
   checkStairs();
@@ -1255,6 +1291,17 @@ function draw() {
     if (hasStatus(m,'freeze')) { ctx.fillStyle='rgba(120,210,255,.4)'; ctx.save(); ctx.translate(sx,sy+bob); if(faceLeft)ctx.scale(-1,1); ctx.globalCompositeOperation='source-atop'; ctx.drawImage(spr,-dw/2,-dh/2,dw,dh); ctx.restore(); }
   }
 
+  // nova rings — solid expanding circle of force
+  if (G.novaRings) for (const ring of G.novaRings) {
+    const sx = ring.x - camX, sy = ring.y - camY;
+    const fade = 1 - ring.r / ring.maxR;
+    ctx.strokeStyle = ring.color; ctx.shadowColor = ring.color; ctx.shadowBlur = 12;
+    ctx.globalAlpha = 0.4 + 0.5 * fade; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.arc(sx, sy, ring.r, 0, Math.PI * 2); ctx.stroke();
+    ctx.lineWidth = 2; ctx.globalAlpha = 0.25 * fade;
+    ctx.beginPath(); ctx.arc(sx, sy, ring.r - 5, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+  }
   // projectiles (player)
   for (const pr of G.projectiles) {
     const sx=pr.x-camX, sy=pr.y-camY;
