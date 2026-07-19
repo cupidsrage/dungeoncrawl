@@ -1498,15 +1498,22 @@ document.getElementById('sellJunk').onclick = () => {
   const p = G.player;
   const rank = { common:1, uncommon:2, rare:3, epic:4, legendary:5 };
   const mul = G.upgradeEffects?.essenceMul || 1;
-  const bonus = G.upgradeEffects?.salvageBonus || 0;   // Greed: +1 per junk item
+  const bonusEvery = G.upgradeEffects?.salvageBonusEvery || 0;   // Greed: +1 per 3 junk items
   const keep = [];
   let total = 0;
+  let junkCount = 0;
   for (const it of p.bag) {
     if (rank[it.rarity] <= 2) {   // common + uncommon
-      const gain = Math.round((ESSENCE_YIELD[it.rarity] || 1) * mul) + bonus;
+      const gain = Math.round((ESSENCE_YIELD[it.rarity] || 1) * mul);
       G.runEssence[it.rarity] = (G.runEssence[it.rarity] || 0) + gain;
       total += gain;
+      junkCount++;
     } else keep.push(it);
+  }
+  if (bonusEvery > 0 && junkCount >= bonusEvery) {
+    const bonus = Math.floor(junkCount / bonusEvery);
+    G.runEssence.common = (G.runEssence.common || 0) + bonus;
+    total += bonus;
   }
   p.bag = keep;
   if (total) log(`Salvaged junk → +${total} essence`, 'var(--accent)');

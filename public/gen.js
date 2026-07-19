@@ -192,13 +192,13 @@ function bossName(rng) { return `${rng.pick(BOSS_PRE)} ${rng.pick(BOSS_TITLE)}`;
 // `ess` = essence granted when an item of this tier is destroyed.
 export const RARITIES = [
   { key: 'common', name: 'Common', color: '#c8c8c8', w: 100, affixes: [0, 1], mul: 1.0, ess: 1 },
-  { key: 'uncommon', name: 'Uncommon', color: '#5bcf6a', w: 55, affixes: [1, 2], mul: 1.1, ess: 2 },
-  { key: 'rare', name: 'Rare', color: '#4aa3ff', w: 24, affixes: [2, 3], mul: 1.22, ess: 4 },
-  { key: 'epic', name: 'Epic', color: '#b46bff', w: 9, affixes: [3, 4], mul: 1.38, ess: 8 },
-  { key: 'legendary', name: 'Legendary', color: '#f0a733', w: 2.5, affixes: [4, 5], mul: 1.6, ess: 20 },
+  { key: 'uncommon', name: 'Uncommon', color: '#5bcf6a', w: 55, affixes: [1, 2], mul: 1.1, ess: 1 },
+  { key: 'rare', name: 'Rare', color: '#4aa3ff', w: 24, affixes: [2, 3], mul: 1.22, ess: 3 },
+  { key: 'epic', name: 'Epic', color: '#b46bff', w: 9, affixes: [3, 4], mul: 1.38, ess: 6 },
+  { key: 'legendary', name: 'Legendary', color: '#f0a733', w: 2.5, affixes: [4, 5], mul: 1.6, ess: 12 },
 ];
 export const ESSENCE_TIERS = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
-export const ESSENCE_YIELD = { common: 1, uncommon: 2, rare: 4, epic: 8, legendary: 20 };
+export const ESSENCE_YIELD = { common: 1, uncommon: 1, rare: 3, epic: 6, legendary: 12 };
 export const ESSENCE_COLOR = { common: '#c8c8c8', uncommon: '#5bcf6a', rare: '#4aa3ff', epic: '#b46bff', legendary: '#f0a733' };
 
 const BASES = {
