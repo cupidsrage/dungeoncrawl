@@ -381,7 +381,7 @@ function fireAbility(idx, tx, ty) {
     x: p.px, y: p.py, vx: Math.cos(a) * 240, vy: Math.sin(a) * 240,
     life: ab.range * TILE / 240, color: ab.color, dmg: dmgBase, dtype: ab.dmgType,
     pierce: ab.pierce, chain: ab.chain, hitSet: new Set(),
-    lifesteal: ab.lifesteal, onHit: ab.onHit, r: 4,
+    onHit: ab.onHit, r: 4,
   });
 
   if (ab.aoe && ab.shape === 'nova') {
@@ -391,7 +391,7 @@ function fireAbility(idx, tx, ty) {
     G.novaRings = G.novaRings || [];
     G.novaRings.push({
       x: p.px, y: p.py, r: 6, maxR, speed: 320, dmg: dmgBase, dtype: ab.dmgType,
-      color: ab.color, onHit: ab.onHit, lifesteal: ab.lifesteal, hitSet: new Set(),
+      color: ab.color, onHit: ab.onHit, hitSet: new Set(),
     });
     G.effects.push({ type: 'ring', x: p.px, y: p.py, r: 0, maxR, life: .35, t: 0, color: ab.color });
   } else if (ab.shape === 'cleave') {
@@ -917,7 +917,6 @@ function updateProjectiles(dt) {
       if (Math.hypot(mx - pr.x, my - pr.y) < 12) {
         pr.hitSet.add(m.id);
         damageMonster(m, pr.dmg, pr.dtype, pr.onHit);
-        if (pr.lifesteal) p.hp = Math.min(p.maxHp, p.hp + pr.dmg * pr.lifesteal);
         G.effects.push({ type: 'hit', x: pr.x, y: pr.y, life: .18, t: 0, color: pr.color });
         // chain: retarget to nearest unhit monster
         if (pr.chain > 0) {
@@ -948,7 +947,6 @@ function updateNovaRings(dt) {
       if (d <= ring.r + band && d >= ring.r - band) {
         ring.hitSet.add(m.id);
         damageMonster(m, ring.dmg, ring.dtype, ring.onHit);
-        if (ring.lifesteal) p.hp = Math.min(p.maxHp, p.hp + ring.dmg * ring.lifesteal);
         G.effects.push({ type: 'hit', x: mx, y: my, life: .18, t: 0, color: ring.color });
       }
     }

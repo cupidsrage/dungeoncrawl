@@ -192,10 +192,10 @@ function bossName(rng) { return `${rng.pick(BOSS_PRE)} ${rng.pick(BOSS_TITLE)}`;
 // `ess` = essence granted when an item of this tier is destroyed.
 export const RARITIES = [
   { key: 'common', name: 'Common', color: '#c8c8c8', w: 100, affixes: [0, 1], mul: 1.0, ess: 1 },
-  { key: 'uncommon', name: 'Uncommon', color: '#5bcf6a', w: 55, affixes: [1, 2], mul: 1.15, ess: 2 },
-  { key: 'rare', name: 'Rare', color: '#4aa3ff', w: 24, affixes: [2, 3], mul: 1.35, ess: 4 },
-  { key: 'epic', name: 'Epic', color: '#b46bff', w: 9, affixes: [3, 4], mul: 1.6, ess: 8 },
-  { key: 'legendary', name: 'Legendary', color: '#f0a733', w: 2.5, affixes: [4, 5], mul: 2.0, ess: 20 },
+  { key: 'uncommon', name: 'Uncommon', color: '#5bcf6a', w: 55, affixes: [1, 2], mul: 1.1, ess: 2 },
+  { key: 'rare', name: 'Rare', color: '#4aa3ff', w: 24, affixes: [2, 3], mul: 1.22, ess: 4 },
+  { key: 'epic', name: 'Epic', color: '#b46bff', w: 9, affixes: [3, 4], mul: 1.38, ess: 8 },
+  { key: 'legendary', name: 'Legendary', color: '#f0a733', w: 2.5, affixes: [4, 5], mul: 1.6, ess: 20 },
 ];
 export const ESSENCE_TIERS = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
 export const ESSENCE_YIELD = { common: 1, uncommon: 2, rare: 4, epic: 8, legendary: 20 };
@@ -267,7 +267,9 @@ export function generateItem(seed, salt, floor, magicFind = 0) {
 
   const rarity = rng.weighted(RARITIES.map((r) => ({ ...r, w: r.w * (1 + magicFind) * (r.key === 'common' ? 1 / (1 + magicFind * 0.5) : 1) })));
   const ilvl = floor + rng.int(0, 2);
-  const scale = 1 + ilvl * 0.12;
+  // Flatter growth so the player doesn't outscale mobs. Was 0.12/level, which
+  // compounded with rarity.mul (up to 2x) into runaway power on deep floors.
+  const scale = 1 + ilvl * 0.06;
 
   const item = { id: `${seed}_${salt}`, slot, base: base.key, rarity: rarity.key, ilvl, affixes: [], stats: {} };
 
@@ -327,7 +329,7 @@ const DMG_TYPES = [
   { key: 'fire', name: 'Fire', color: '#ff7a3c', onHit: { status: 'burn', chance: 1.0, dur: 2.5 } },
   { key: 'cold', name: 'Cold', color: '#63c6ff', onHit: { status: 'chill', chance: 1.0, dur: 1.8, freezeAt: 3 } },
   { key: 'lightning', name: 'Lightning', color: '#ffe14a', onHit: { status: 'stun', chance: 0.22, dur: 0.7 } },
-  { key: 'void', name: 'Void', color: '#b46bff', lifesteal: 0.1, onHit: { status: 'vulnerable', chance: 0.5, dur: 3 } },
+  { key: 'void', name: 'Void', color: '#b46bff', onHit: { status: 'vulnerable', chance: 0.5, dur: 3 } },
   { key: 'poison', name: 'Poison', color: '#8fd14b', onHit: { status: 'poison', chance: 1.0, dur: 3 } },
 ];
 
@@ -351,14 +353,15 @@ export const STATUS = {
 };
 const ABILITY_ADJ = ['Searing', 'Riven', 'Umbral', 'Tempest', 'Gloom', 'Radiant', 'Wither', 'Fractal'];
 const ABILITY_NOUN = { bolt: 'Bolt', nova: 'Burst', cleave: 'Sweep', lance: 'Lance', volley: 'Barrage', chain: 'Arc' };
-// Some abilities grant a self-buff on cast (rarer, and better on higher rarities).
-const SELF_BUFFS = ['haste', 'rage', 'fortify', 'shield', 'regen'];
+// Weapon abilities can grant only OFFENSIVE self-buffs on cast. Defensive buffs
+// (shield, fortify, regen) belong on armor/trinkets, not weapons.
+const WEAPON_SELF_BUFFS = ['haste', 'rage'];
 
 export function generateAbility(seed, salt, ilvl, rarity, base) {
   const rng = makeRNG(subSeed(seed, `abil:${salt}`));
   const shape = rng.weighted(ABILITY_SHAPES);
   const dtype = rng.pick(DMG_TYPES);
-  const scale = 1 + ilvl * 0.14;
+  const scale = 1 + ilvl * 0.07;
   const power = Math.round(rng.int(6, 12) * scale * rarity.mul);
   const cd = Math.max(0.4, +(shape.cd * rng.float(0.85, 1.1) / rarity.mul).toFixed(2));
   const name = `${rng.pick(ABILITY_ADJ)} ${ABILITY_NOUN[shape.key]}`;
@@ -366,11 +369,11 @@ export function generateAbility(seed, salt, ilvl, rarity, base) {
   // On-hit status from the damage type (guaranteed for elemental, chance for lightning/void).
   const onHit = dtype.onHit ? { ...dtype.onHit } : null;
 
-  // Self-buff chance scales with rarity: common ~0, legendary ~55%.
+  // Self-buff chance scales with rarity: common ~0, legendary ~55%. Offensive only.
   const rarityRank = ['common', 'uncommon', 'rare', 'epic', 'legendary'].indexOf(rarity.key);
   let selfBuff = null;
   if (rng.chance(0.1 + rarityRank * 0.11)) {
-    const b = rng.pick(SELF_BUFFS);
+    const b = rng.pick(WEAPON_SELF_BUFFS);
     selfBuff = { status: b, dur: +(2 + rarityRank * 0.8).toFixed(1) };
   }
 
@@ -383,14 +386,13 @@ export function generateAbility(seed, salt, ilvl, rarity, base) {
     const chanceTxt = onHit.chance >= 1 ? 'inflicting' : `with a ${Math.round(onHit.chance * 100)}% chance to inflict`;
     parts.push(`${chanceTxt} ${s.name}`);
   }
-  if (dtype.lifesteal) parts.push('healing you for part of the damage');
   if (selfBuff) parts.push(`and granting you ${STATUS[selfBuff.status].name} for ${selfBuff.dur}s`);
 
   return {
     name, shape: shape.key, shapeName: shape.name, range: shape.range,
     dmgType: dtype.key, dmgTypeName: dtype.name, color: dtype.color,
     power, cd, aoe: !!shape.aoe, pierce: !!shape.pierce, multi: shape.multi || 1,
-    chain: shape.chain || 0, lifesteal: dtype.lifesteal || 0,
+    chain: shape.chain || 0,
     onHit, selfBuff,
     desc: parts.join(' ') + '.',
   };
