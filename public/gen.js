@@ -419,7 +419,12 @@ export function generateDefensiveProc(seed, salt, ilvl, rarity, isTrinket = fals
   const buff = rng.pick(DEF_BUFFS);
   const trigger = rng.chance(0.5) ? 'onHit' : 'periodic';   // when hurt, or on a timer
   const dur = +(2 + rarityRank * 0.7).toFixed(1);
-  const cd = +(rng.float(6, 10) - rarityRank * 0.6).toFixed(1);   // seconds between procs
+  // Base cooldown 6-10s, shorter at higher rarity. Regen heals for its whole
+  // duration (not a one-shot like shield/fortify), so it gets a longer cooldown
+  // to keep its total sustain in line with the burst defensives.
+  let cd = rng.float(6, 10) - rarityRank * 0.6;
+  if (buff === 'regen') cd += 6;
+  cd = +cd.toFixed(1);
   const name = `${rng.pick(DEF_ADJ)} ${isTrinket ? 'Charm' : 'Guard'}`;
   const trigTxt = trigger === 'onHit' ? `When you take damage (once per ${cd}s)` : `Every ${cd}s`;
   const buffName = STATUS[buff].name;
