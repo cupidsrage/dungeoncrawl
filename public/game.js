@@ -180,6 +180,91 @@ let G = null; // whole run state
 const keys = {};
 let mouse = { x: 0, y: 0, down: false, right: false };
 
+// ---------- audio ----------
+// Procedural Web Audio keeps the game self-contained: no downloaded assets, just
+// a gloomy looping dungeon bed plus punchy one-shot sound effects. Browsers only
+// allow audio after a user gesture, so start/resume is called from input handlers.
+const Audio = (() => {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return { enabled: false, ensure() {}, toggle() {}, sfx() {}, setDanger() {}, updateButton() {} };
+  let ctx, master, musicGain, sfxGain, loopTimer = null, step = 0, danger = 0;
+  const KEY = 'seedspire_audio_muted';
+  const state = { enabled: localStorage.getItem(KEY) !== '1' };
+  const scale = [0, 3, 5, 7, 10, 12, 15, 17];
+
+  function ensure() {
+    if (!ctx) {
+      ctx = new AC();
+      master = ctx.createGain(); musicGain = ctx.createGain(); sfxGain = ctx.createGain();
+      master.gain.value = state.enabled ? 0.55 : 0;
+      musicGain.gain.value = 0.22; sfxGain.gain.value = 0.45;
+      musicGain.connect(master); sfxGain.connect(master); master.connect(ctx.destination);
+      startMusic();
+    }
+    if (ctx.state === 'suspended') ctx.resume();
+    updateButton();
+  }
+  function updateButton() {
+    const btn = document.getElementById('audioToggle');
+    if (btn) btn.textContent = state.enabled ? '🔊 AUDIO' : '🔇 MUTED';
+  }
+  function toggle() {
+    ensure(); state.enabled = !state.enabled; localStorage.setItem(KEY, state.enabled ? '0' : '1');
+    master.gain.cancelScheduledValues(ctx.currentTime);
+    master.gain.linearRampToValueAtTime(state.enabled ? 0.55 : 0, ctx.currentTime + 0.08);
+    updateButton();
+  }
+  function tone(freq, dur, type = 'sine', gain = 0.15, dest = sfxGain, when = ctx?.currentTime || 0, slideTo = null) {
+    if (!ctx) return;
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, when);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(20, slideTo), when + dur);
+    g.gain.setValueAtTime(0.0001, when); g.gain.exponentialRampToValueAtTime(gain, when + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+    o.connect(g); g.connect(dest); o.start(when); o.stop(when + dur + 0.03);
+  }
+  function noise(dur, gain = 0.1, hp = 600, when = ctx?.currentTime || 0) {
+    if (!ctx) return;
+    const len = Math.max(1, Math.floor(ctx.sampleRate * dur));
+    const b = ctx.createBuffer(1, len, ctx.sampleRate), d = b.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    f.type = 'highpass'; f.frequency.value = hp; g.gain.value = gain;
+    src.buffer = b; src.connect(f); f.connect(g); g.connect(sfxGain); src.start(when);
+  }
+  function sfx(name) {
+    ensure(); if (!state.enabled || !ctx) return;
+    const now = ctx.currentTime;
+    if (name === 'cast') { tone(220, .13, 'triangle', .13, sfxGain, now, 440); tone(660, .08, 'sine', .06, sfxGain, now + .03); }
+    else if (name === 'hit') { noise(.08, .12, 900, now); tone(130, .09, 'square', .07, sfxGain, now, 90); }
+    else if (name === 'hurt') { noise(.16, .15, 250, now); tone(180, .18, 'sawtooth', .08, sfxGain, now, 80); }
+    else if (name === 'kill') { tone(330, .10, 'triangle', .12, sfxGain, now); tone(165, .22, 'sine', .10, sfxGain, now + .05, 82); }
+    else if (name === 'pickup') { tone(660, .06, 'sine', .09, sfxGain, now); tone(990, .08, 'sine', .08, sfxGain, now + .06); }
+    else if (name === 'loot') { tone(523, .08, 'triangle', .09, sfxGain, now); tone(784, .12, 'triangle', .09, sfxGain, now + .08); }
+    else if (name === 'level') { [440,554,659,880].forEach((f,i)=>tone(f,.12,'triangle',.08,sfxGain,now+i*.07)); }
+    else if (name === 'stairs') { tone(110, .35, 'sine', .12, sfxGain, now, 55); noise(.25, .08, 120, now); }
+    else if (name === 'death') { tone(196, .7, 'sawtooth', .11, sfxGain, now, 49); noise(.55, .09, 80, now); }
+  }
+  function startMusic() {
+    if (loopTimer) return;
+    const playStep = () => {
+      if (!ctx) return;
+      const now = ctx.currentTime, root = 55 * (danger ? Math.pow(2, 2/12) : 1);
+      if (step % 2 === 0) tone(root, 1.8, 'sine', .10, musicGain, now);
+      const note = root * Math.pow(2, scale[(step * 3 + (danger ? 2 : 0)) % scale.length] / 12) * 2;
+      if (step % 4 === 1) tone(note, .9, 'triangle', .035, musicGain, now + .15);
+      if (danger && step % 4 === 3) tone(root * 4, .25, 'sawtooth', .025, musicGain, now + .05);
+      step = (step + 1) % 16;
+    };
+    playStep(); loopTimer = setInterval(playStep, 750);
+  }
+  function setDanger(v) { danger = v ? 1 : 0; }
+  window.addEventListener('pointerdown', ensure, { once: true });
+  window.addEventListener('keydown', ensure, { once: true });
+  return { get enabled() { return state.enabled; }, ensure, toggle, sfx, setDanger, updateButton };
+})();
+
+
 function resize() {
   const cw = VIEW_TILES_X * TILE, ch = VIEW_TILES_Y * TILE;
   cv.width = cw * DPR; cv.height = ch * DPR;
@@ -263,6 +348,8 @@ function buildFloor(floor) {
   G.player.py = (d.entry.y + 0.5) * TILE;
   log(`You enter floor ${floor}.`, floor % 5 === 0 ? 'var(--danger)' : 'var(--dim)');
   if (floor % 5 === 0) log('Something vast stirs below.', 'var(--danger)');
+  Audio.setDanger(floor % 5 === 0);
+  Audio.sfx('stairs');
 }
 
 function newRun(seed, name, startFloor = 1) {
@@ -352,6 +439,7 @@ window.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   keys[k] = true;
   if (k === 'i') { e.preventDefault(); toggleInv(); }
+  if (k === 'm') { e.preventDefault(); Audio.toggle(); }
   if (['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright','j','k',' '].includes(k)) e.preventDefault();
 });
 window.addEventListener('keyup', (e) => { if (isTyping()) return; keys[e.key.toLowerCase()] = false; });
@@ -464,6 +552,7 @@ function fireAbility(idx, tx, ty) {
   }
   // self-buff on cast
   if (ab.selfBuff) { applyStatus(p, ab.selfBuff.status, ab.selfBuff.dur, 1); log(`${STATUS[ab.selfBuff.status].name}!`, STATUS[ab.selfBuff.status].color); }
+  Audio.sfx('cast');
   screenShake(ab.aoe ? 4 : 2);
 }
 
@@ -499,6 +588,7 @@ function damageMonster(m, amount, dtype, onHit = null) {
   // apply a status the hit carries (from the ability's damage type)
   if (onHit && G.rng.chance(onHit.chance)) applyStatus(m, onHit.status, onHit.dur, 1);
   spawnDamageNumber(m.fx * TILE + TILE / 2, m.fy * TILE + TILE / 2, dmg, crit, dtype);
+  Audio.sfx('hit');
   if (m.hp <= 0) killMonster(m);
 }
 
@@ -517,6 +607,7 @@ function killMonster(m) {
   const gold = G.rng.int(2, 6) + G.floor;
   G.pickups.push({ x: m.fx, y: m.fy, type: 'gold', amt: gold });
   if (G.rng.chance(0.10)) G.pickups.push({ x: m.fx + 0.3, y: m.fy, type: 'hp', amt: 5 + Math.floor(G.floor * 0.4) });
+  Audio.sfx('kill');
   if (m.boss) { log(`${m.name} falls!`, 'var(--gold)'); screenShake(10); }
 }
 
@@ -539,6 +630,7 @@ function damagePlayer(amount, incomingStatus = null) {
       log(`${STATUS[df.buff].name}!`, df.color);
     }
   }
+  Audio.sfx('hurt');
   screenShake(5);
   if (p.hp <= 0) gameOver();
 }
@@ -554,6 +646,7 @@ function gainXp(amount) {
     p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.2);   // small heal, not a reset
     log(`Level up! You are level ${p.level}.`, 'var(--accent)');
     G.effects.push({ type: 'levelup', x: p.px, y: p.py, life: .8, t: 0 });
+    Audio.sfx('level');
   }
 }
 
@@ -1027,6 +1120,7 @@ function updatePickups() {
     if (Math.hypot(px - p.px, py - p.py) < 22) {
       if (pu.type === 'gold') { G.gold += pu.amt; }
       else if (pu.type === 'hp') { p.hp = Math.min(p.maxHp, p.hp + pu.amt); }
+      Audio.sfx('pickup');
       pu.dead = true;
     }
   }
@@ -1038,6 +1132,7 @@ function updatePickups() {
       G.player.bag.push(d.item);
       log(`Picked up ${d.item.name}`, d.item.rarityColor);
       d.dead = true;
+      Audio.sfx('loot');
       // auto-equip if slot empty
       autoEquipIfBetter(d.item);
     }
@@ -1126,6 +1221,7 @@ async function gameOver() {
   if (!G.alive) return;
   G.alive = false;
   log('You have fallen.', 'var(--danger)');
+  Audio.sfx('death');
   // Death: bank only 30% of collected essence.
   let res = null;
   if (Account.authed) res = await apiBankEssence(G.runEssence, 0.3);
@@ -1632,12 +1728,13 @@ document.getElementById('startBtn').onclick = () => {
   }
   document.getElementById('menu').style.display = 'none';
   document.getElementById('log').innerHTML = '';
+  Audio.ensure();
   newRun(seed, name, startFloor);
   saveRun();
 };
 document.getElementById('resumeBtn').onclick = async () => {
   const ok = await loadRun();
-  if (ok) document.getElementById('menu').style.display = 'none';
+  if (ok) { Audio.ensure(); document.getElementById('menu').style.display = 'none'; }
 };
 
 // ---------- auth UI ----------
@@ -1774,6 +1871,9 @@ document.getElementById('hubClose').onclick = () => { document.getElementById('h
 
 // ---------- boot ----------
 resize();
+Audio.updateButton();
+const audioToggle = document.getElementById('audioToggle');
+if (audioToggle) audioToggle.onclick = () => Audio.toggle();
 loadScores();
 (async () => { await apiMe(); renderAccount(); })();  // restore session if token valid
 let last = performance.now();

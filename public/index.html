@@ -63,6 +63,7 @@
   #statusChips .chip em{opacity:.6;font-style:normal;font-size:9px}
   #log div{opacity:.9;margin-bottom:2px;text-shadow:0 1px 2px #000}
   #hint{position:absolute;right:14px;bottom:14px;font-size:11px;color:var(--dim);text-align:right;line-height:1.6}
+  #audioToggle{pointer-events:auto;cursor:pointer;color:var(--accent);border-color:var(--accent)}
 
   /* ---------- Inventory ---------- */
   #inv{position:absolute;inset:0;z-index:40;background:rgba(6,8,12,.9);display:none;
@@ -148,12 +149,13 @@
         <div class="bar xp"><i id="xpBar" style="width:0%"></i></div>
       </div>
       <div class="stat" id="goldStat">◈ 0</div>
+      <button class="stat" id="audioToggle" type="button">🔊 AUDIO</button>
       <div class="floorTag" id="floorTag">FLOOR 1</div>
     </div>
     <div id="statusChips"></div>
     <div id="abilities"></div>
     <div id="log"></div>
-    <div id="hint">WASD / arrows — move<br>Left click / J — attack 1 · Right click / L — attack 2<br>K — dash · I — inventory<br>step on ▼ to descend</div>
+    <div id="hint">WASD / arrows — move<br>Left click / J — attack 1 · Right click / L — attack 2<br>K — dash · I — inventory · M — mute<br>step on ▼ to descend</div>
     <div id="touch">
       <div id="stick"><div id="nub"></div></div>
       <div id="fire">ATTACK</div>
