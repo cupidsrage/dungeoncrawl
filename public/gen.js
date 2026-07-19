@@ -278,10 +278,15 @@ export function generateItem(seed, salt, floor, magicFind = 0) {
     const lo = Math.round(base.dmg[0] * scale * rarity.mul);
     const hi = Math.round(base.dmg[1] * scale * rarity.mul);
     item.stats.dmgLo = lo; item.stats.dmgHi = hi; item.stats.spd = base.spd;
-    // Every weapon carries a procedural ability.
+    // Every weapon carries a procedural offensive ability.
     item.ability = generateAbility(seed, `${salt}:abil`, ilvl, rarity, base);
   } else if (slot === 'armor') {
     item.stats.armor = Math.round(rng.int(base.armor[0], base.armor[1]) * scale * rarity.mul);
+    // Armor can carry a defensive proc (shield/fortify/regen on a trigger).
+    item.defense = generateDefensiveProc(seed, `${salt}:def`, ilvl, rarity);
+  } else if (slot === 'trinket') {
+    // Trinkets are the main home for defensive procs.
+    item.defense = generateDefensiveProc(seed, `${salt}:def`, ilvl, rarity, true);
   }
 
   // Roll affixes.
@@ -396,6 +401,30 @@ export function generateAbility(seed, salt, ilvl, rarity, base) {
     onHit, selfBuff,
     desc: parts.join(' ') + '.',
   };
+}
+
+// Defensive procs for armor & trinkets — the home for shield/fortify/regen buffs
+// that were removed from weapons. Triggers either when you take damage or on a
+// cooldown, granting a defensive buff. Not every item gets one (chance scales
+// with rarity; trinkets are more likely).
+const DEF_BUFFS = ['shield', 'fortify', 'regen'];
+const DEF_ADJ = ['Warding', 'Bastion', 'Aegis', 'Bulwark', 'Stalwart', 'Guardian', 'Sheltering'];
+export function generateDefensiveProc(seed, salt, ilvl, rarity, isTrinket = false) {
+  const rng = makeRNG(subSeed(seed, `def:${salt}`));
+  const rarityRank = ['common', 'uncommon', 'rare', 'epic', 'legendary'].indexOf(rarity.key);
+  // chance to have a proc at all — trinkets more likely, higher rarity more likely
+  const chance = (isTrinket ? 0.35 : 0.18) + rarityRank * 0.12;
+  if (!rng.chance(chance)) return null;
+
+  const buff = rng.pick(DEF_BUFFS);
+  const trigger = rng.chance(0.5) ? 'onHit' : 'periodic';   // when hurt, or on a timer
+  const dur = +(2 + rarityRank * 0.7).toFixed(1);
+  const cd = +(rng.float(6, 10) - rarityRank * 0.6).toFixed(1);   // seconds between procs
+  const name = `${rng.pick(DEF_ADJ)} ${isTrinket ? 'Charm' : 'Guard'}`;
+  const trigTxt = trigger === 'onHit' ? `When you take damage (once per ${cd}s)` : `Every ${cd}s`;
+  const buffName = STATUS[buff].name;
+  const desc = `${trigTxt}, gain ${buffName} for ${dur}s.`;
+  return { name, buff, trigger, dur, cd, desc, color: STATUS[buff].color };
 }
 
 // Starting weapon so a new run isn't empty-handed. Rerolls the salt until a

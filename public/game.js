@@ -184,6 +184,12 @@ function recomputeStats() {
   p.abilities = [];
   if (p.equip.weapon?.ability) p.abilities.push({ ...p.equip.weapon.ability, cdLeft: 0, weapon: p.equip.weapon });
   if (p.equip.weapon2?.ability) p.abilities.push({ ...p.equip.weapon2.ability, cdLeft: 0, weapon: p.equip.weapon2 });
+  // Defensive procs come from equipped armor + trinket.
+  p.defenses = [];
+  for (const slot of ['armor', 'trinket']) {
+    const it = p.equip[slot];
+    if (it?.defense) p.defenses.push({ ...it.defense, cdLeft: 0 });
+  }
 }
 
 function weaponDamage() {
@@ -474,6 +480,14 @@ function damagePlayer(amount, incomingStatus = null) {
   p.hp -= dmg;
   p.hitFlash = 0.2; p.invuln = 0.25;
   if (incomingStatus && G.rng.chance(incomingStatus.chance ?? 1)) applyStatus(p, incomingStatus.status, incomingStatus.dur, 1);
+  // onHit defensive procs: taking damage can trigger a shield/fortify/regen buff.
+  if (p.defenses) for (const df of p.defenses) {
+    if (df.trigger === 'onHit' && df.cdLeft <= 0) {
+      applyStatus(p, df.buff, df.dur, 1);
+      df.cdLeft = df.cd;
+      log(`${STATUS[df.buff].name}!`, df.color);
+    }
+  }
   screenShake(5);
   if (p.hp <= 0) gameOver();
 }
@@ -1122,6 +1136,14 @@ function update(dt) {
   if (p.dashCd > 0) p.dashCd -= dt;
   if (p.swingCd > 0) p.swingCd -= dt;
   for (const ab of p.abilities) if (ab.cdLeft > 0) ab.cdLeft -= dt;
+  // Defensive procs: periodic ones fire on their timer; all tick their cooldown.
+  if (p.defenses) for (const df of p.defenses) {
+    if (df.cdLeft > 0) df.cdLeft -= dt;
+    if (df.trigger === 'periodic' && df.cdLeft <= 0) {
+      applyStatus(p, df.buff, df.dur, 1);
+      df.cdLeft = df.cd;
+    }
+  }
 
   const rooted = isRooted(p);   // frozen/stunned: can't move
 
@@ -1471,9 +1493,10 @@ function renderInv() {
     const c = document.createElement('div'); c.className='itemcard'; c.style.borderColor = it.rarityColor + '55';
     const affLines = it.affixes.map((a)=>`<div class="aff">${a.label}</div>`).join('');
     const abLine = it.ability ? `<div class="ab">✦ ${it.ability.name} — ${it.ability.desc}</div>` : '';
+    const defLine = it.defense ? `<div class="ab" style="color:#8fd1ff">🛡 ${it.defense.name} — ${it.defense.desc}</div>` : '';
     const dmg = it.stats.dmgHi ? `<span class="tp">${it.stats.dmgLo}-${it.stats.dmgHi} dmg</span>` : it.stats.armor ? `<span class="tp">${it.stats.armor} armor</span>` : `<span class="tp">${it.rarityName}</span>`;
     const ess = ESSENCE_YIELD[it.rarity] || 1;
-    c.innerHTML = `<div class="top"><span class="nm" style="color:${it.rarityColor}">${it.name}</span>${dmg}</div>${affLines}${abLine}`
+    c.innerHTML = `<div class="top"><span class="nm" style="color:${it.rarityColor}">${it.name}</span>${dmg}</div>${affLines}${abLine}${defLine}`
       + `<div class="cardbtns"><button class="ib equip">Equip</button><button class="ib destroy" title="Destroy for ${ess} ${it.rarity} essence">Destroy ✦${ess}</button></div>`;
     c.querySelector('.equip').onclick = (e) => { e.stopPropagation(); equipItem(it); renderInv(); };
     c.querySelector('.destroy').onclick = (e) => { e.stopPropagation(); destroyItem(it); };
@@ -1518,8 +1541,9 @@ function attachTip(el, it) {
     tip.style.display = 'block';
     const aff = it.affixes.map((a)=>`<div class="tt-line">${a.label}</div>`).join('');
     const ab = it.ability ? `<div class="tt-ab">✦ ${it.ability.name}<br>${it.ability.desc}<br><span style="color:var(--dim)">CD ${it.ability.cd}s · ${it.ability.dmgTypeName}</span></div>` : '';
+    const def = it.defense ? `<div class="tt-ab" style="color:#8fd1ff">🛡 ${it.defense.name}<br>${it.defense.desc}</div>` : '';
     const base = it.stats.dmgHi ? `${it.stats.dmgLo}-${it.stats.dmgHi} damage` : it.stats.armor ? `${it.stats.armor} armor` : it.slot;
-    tip.innerHTML = `<div class="tt-name" style="color:${it.rarityColor}">${it.name}</div><div class="tt-sub">${it.rarityName} · ilvl ${it.ilvl} · ${base}</div>${aff}${ab}`;
+    tip.innerHTML = `<div class="tt-name" style="color:${it.rarityColor}">${it.name}</div><div class="tt-sub">${it.rarityName} · ilvl ${it.ilvl} · ${base}</div>${aff}${ab}${def}`;
   };
   el.onmousemove = (e) => { tip.style.left = Math.min(e.clientX+14, window.innerWidth-270)+'px'; tip.style.top = (e.clientY+14)+'px'; };
   el.onmouseleave = () => { tip.style.display = 'none'; };
