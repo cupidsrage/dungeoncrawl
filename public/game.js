@@ -1,7 +1,7 @@
 import {
   makeRNG, hashSeed, subSeed, generateDungeon, generateMonsters, generateItem,
   starterWeapon, starterWeaponAtTier, MAP_W, MAP_H, T, STATUS, ESSENCE_TIERS, ESSENCE_YIELD, ESSENCE_COLOR,
-} from './gen.js?v=5';
+} from './gen.js?v=6';
 import { buildSprites, sprites, frameFor } from './sprites.js?v=5';
 import { UPGRADES, UPGRADE_CATEGORIES, availableCharacters, characterById, computeUpgradeEffects, nextCost } from './upgrades.js?v=6';
 
@@ -20,6 +20,14 @@ const HD = {
   environment: loadArt('./assets/hd/environment-atlas.png'),
   icons: loadArt('./assets/hd/icon-atlas.png'),
 };
+const HD_VFX = {
+  phys: loadArt('./assets/hd/vfx/phys.webp'),
+  fire: loadArt('./assets/hd/vfx/fire.webp'),
+  cold: loadArt('./assets/hd/vfx/cold.webp'),
+  lightning: loadArt('./assets/hd/vfx/lightning.webp'),
+  void: loadArt('./assets/hd/vfx/void.webp'),
+  poison: loadArt('./assets/hd/vfx/poison.webp'),
+};
 const HD_HERO_WALK = {
   wanderer: loadArt('./assets/hd/animations/wanderer-walk.webp'),
   ember: loadArt('./assets/hd/animations/ember-walk.webp'),
@@ -34,17 +42,32 @@ const HD_MOB_WALK = {
   spitter: loadArt('./assets/hd/animations/spitter-walk.webp'),
   warden: loadArt('./assets/hd/animations/warden-walk.webp'),
   boss: loadArt('./assets/hd/animations/boss-walk.webp'),
+  leech: loadArt('./assets/hd/animations/leech-walk.webp'),
+  sentinel: loadArt('./assets/hd/animations/sentinel-walk.webp'),
+  cultist: loadArt('./assets/hd/animations/cultist-walk.webp'),
+  mimic: loadArt('./assets/hd/animations/mimic-walk.webp'),
 };
 const HD_HERO_COL = { wanderer:0, ember:1, iron:2, shade:3 };
 const HD_MOB_CELL = { grub:[0,1], skitter:[1,1], brute:[2,1], shade:[3,1], spitter:[0,2], warden:[1,2], boss:[2,2] };
 const HD_MOB_SIZE = {
   grub:[40,32], skitter:[42,34], brute:[48,46], shade:[38,44],
   spitter:[42,38], warden:[44,48], boss:[66,66],
+  leech:[42,34], sentinel:[46,48], cultist:[42,48], mimic:[48,40],
 };
-const HD_MOB_FRAME_MS = { grub:115, skitter:82, brute:145, shade:125, spitter:138, warden:140, boss:165 };
+const HD_MOB_FRAME_MS = {
+  grub:115, skitter:82, brute:145, shade:125, spitter:138, warden:140, boss:165,
+  leech:92, sentinel:128, cultist:120, mimic:105,
+};
 const HD_TREASURE_CELL = [3,2];
-const HD_ABILITY_COL = { bolt:0, nova:1, cleave:2, lance:3, volley:4, chain:5 };
-const HD_ITEM_COL = { dagger:0, sword:1, axe:2, staff:3, bow:4, robe:5, leather:5, plate:5, ring:5, amulet:5, charm:5 };
+const HD_ABILITY_CELL = {
+  bolt:[0,0], nova:[1,0], cleave:[2,0], lance:[3,0], volley:[4,0], chain:[5,0],
+  meteor:[1,1], vortex:[4,1], orbit:[2,1], beam:[3,1], mine:[0,1],
+};
+const HD_ITEM_COL = {
+  dagger:0, sword:1, axe:2, staff:3, bow:4, hammer:2, spear:3, scythe:2, wand:3, crossbow:4,
+  robe:5, leather:5, plate:5, chainmail:5, brigandine:5, mantle:5, boneguard:5,
+  ring:5, amulet:5, charm:5, sigil:5, tome:5, idol:5, lantern:5,
+};
 
 function artReady(img) { return !!img && img.complete && img.naturalWidth > 0; }
 function drawArtCell(img, col, row, cols, rows, dx, dy, dw, dh, flip = false, alpha = 1) {
@@ -78,6 +101,29 @@ function movementCell(now, frameMs, phase = 0) {
 
 function drawCenteredArtCell(img, col, row, cols, rows, cx, cy, dw, dh, flip = false, alpha = 1) {
   return drawArtCell(img, col, row, cols, rows, cx - dw / 2, cy - dh / 2, dw, dh, flip, alpha);
+}
+
+function effectFrame(time, start = 0, count = 8, frameMs = 70) {
+  return start + (Math.floor(time / frameMs) % count);
+}
+
+function drawVfx(dtype, frame, cx, cy, size, rotation = 0, alpha = 1) {
+  const img = HD_VFX[dtype] || HD_VFX.phys;
+  if (!artReady(img)) return false;
+  const index = Math.max(0, Math.min(7, frame | 0));
+  const col = index % 4, row = Math.floor(index / 4);
+  const sx = col * img.naturalWidth / 4, sy = row * img.naturalHeight / 2;
+  const sw = img.naturalWidth / 4, sh = img.naturalHeight / 2;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(rotation);
+  ctx.globalAlpha *= alpha;
+  ctx.globalCompositeOperation = 'screen';
+  ctx.imageSmoothingEnabled = true;
+  if ('imageSmoothingQuality' in ctx) ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, sx, sy, sw, sh, -size / 2, -size / 2, size, size);
+  ctx.restore();
+  return true;
 }
 
 function atlasPosition(col, row, cols, rows) {
@@ -369,7 +415,9 @@ function recomputeStats() {
   const p = G.player;
   const eq = Object.values(p.equip).filter(Boolean);
   const s = { maxHp: 100, armor: 0, critChance: 0.05, critDmg: 0.5, lifesteal: 0, moveSpeed: 0,
-    dodge: 0, regen: 0.25, cdr: 0, flatDmg: 0, fireDmg: 0, coldDmg: 0, lightningDmg: 0 };
+    dodge: 0, regen: 0.25, cdr: 0, flatDmg: 0, fireDmg: 0, coldDmg: 0, lightningDmg: 0, voidDmg: 0, poisonDmg: 0,
+    attackSpeed: 0, abilityPower: 0, area: 0, projectileSpeed: 0, statusDur: 0, execute: 0,
+    thorns: 0, blockChance: 0, pickupRadius: 0, goldFind: 0, luck: 0 };
   s.maxHp += (p.level - 1) * 10;
   for (const it of eq) for (const [k, v] of Object.entries(it.stats)) {
     if (s[k] != null && !['dmgLo', 'dmgHi', 'spd'].includes(k)) s[k] += v;
@@ -390,6 +438,11 @@ function recomputeStats() {
   s.moveSpeed += heroEff.moveSpeed || 0;
   s.fireDmgMul = heroEff.fireDmgMul || 1;
   s.dmgMul = eff.dmgMul || 1;          // applied to weapon+ability damage
+  s.critChance = Math.min(.75, s.critChance);
+  s.dodge = Math.min(.55, s.dodge);
+  s.blockChance = Math.min(.5, s.blockChance);
+  s.cdr = Math.min(.65, s.cdr);
+  s.execute = Math.min(.25, s.execute);
   p.stats = s;
   p.maxHp = s.maxHp;
   if (p.hp > p.maxHp) p.hp = p.maxHp;
@@ -409,11 +462,18 @@ function weaponDamage() {
   const w = G.player.equip.weapon;
   const s = G.player.stats;
   let base = w ? (G.rng.int(w.stats.dmgLo, w.stats.dmgHi)) : G.rng.int(2, 4);
-  base += s.flatDmg + (s.fireDmg * (s.fireDmgMul || 1)) + s.coldDmg + s.lightningDmg;
+  base += s.flatDmg + (s.fireDmg * (s.fireDmgMul || 1)) + s.coldDmg + s.lightningDmg + s.voidDmg + s.poisonDmg;
   return base * (s.dmgMul || 1);   // Might upgrade multiplier
 }
 
 // ---------- run setup ----------
+const FLOOR_MODIFIERS = [
+  { key: 'fortified', name: 'FORTIFIED', desc: 'Enemies have 28% more life.', apply: (m) => { m.maxHp = Math.round(m.maxHp * 1.28); m.hp = m.maxHp; m.xp = Math.round(m.xp * 1.12); } },
+  { key: 'hunting', name: 'HUNTING', desc: 'Enemies move and strike faster.', apply: (m) => { m.spd *= 1.18; m.dmg = Math.round(m.dmg * 1.1); m.xp = Math.round(m.xp * 1.12); } },
+  { key: 'cursed', name: 'CURSED', desc: 'Enemies deal heavier damage but carry better loot.', apply: (m) => { m.dmg = Math.round(m.dmg * 1.2); m.dropBonus = .18; } },
+  { key: 'gilded', name: 'GILDED', desc: 'More treasure and triple enemy shards.', apply: (m) => { m.dropBonus = .25; m.goldMul = 3; } },
+];
+
 function buildFloor(floor) {
   const d = generateDungeon(G.seed, floor);
   G.floor = floor;
@@ -424,17 +484,24 @@ function buildFloor(floor) {
     ...m, fx: m.x, fy: m.y, hitFlash: 0, aggro: false,
     atkCd: G.rng.float(0.2, 1.0), chargeState: 'idle', chargeT: 0, telegraph: 0, cvx: 0, cvy: 0, dodgeCd: 0,
     retreating: false, retreatT: 0, retreatCd: 0, telegraphKind: null,
+    summonCd: G.rng.float(2.5, 5), summonCount: 0,
   }));
+  const modifierRng = makeRNG(subSeed(G.seed, `floor-modifier:${floor}`));
+  G.floorModifier = floor >= 2 && modifierRng.chance(.68) ? modifierRng.pick(FLOOR_MODIFIERS) : null;
+  if (G.floorModifier) for (const m of G.monsters) G.floorModifier.apply(m);
   G.drops = [];       // ground loot {x,y,item}
   G.projectiles = [];   // player projectiles
   G.eproj = [];         // enemy projectiles
   G.novaRings = [];     // expanding nova ring pulses
+  G.abilityZones = [];  // meteors, vortexes, and armed mines
+  G.orbitals = [];      // orbiting player attacks
   G.effects = [];
   G.pickups = [];     // gold/hp orbs
   // Place player at entry.
   G.player.px = (d.entry.x + 0.5) * TILE;
   G.player.py = (d.entry.y + 0.5) * TILE;
   log(`You enter floor ${floor}.`, floor % 5 === 0 ? 'var(--danger)' : 'var(--dim)');
+  if (G.floorModifier) log(`${G.floorModifier.name}: ${G.floorModifier.desc}`, 'var(--accent)');
   if (floor % 5 === 0) log('Something vast stirs below.', 'var(--danger)');
   Audio.setDanger(floor % 5 === 0);
   Audio.sfx('stairs');
@@ -462,7 +529,7 @@ function newRun(seed, name, startFloor = 1) {
       offhandUnlocked: !!eff.offhandUnlocked,
       bag: [], stats: {}, abilities: [],
     },
-    grid: null, rooms: [], monsters: [], drops: [], projectiles: [], effects: [], pickups: [],
+    grid: null, rooms: [], monsters: [], drops: [], projectiles: [], effects: [], pickups: [], abilityZones: [], orbitals: [],
     lastTime: 0, alive: true,
   };
   recomputeStats();
@@ -601,6 +668,20 @@ function canMove(px, py) {
 }
 
 // ---------- combat ----------
+function pointSegmentDistance(px, py, x1, y1, x2, y2) {
+  const vx = x2 - x1, vy = y2 - y1;
+  const len2 = vx * vx + vy * vy || 1;
+  const t = Math.max(0, Math.min(1, ((px - x1) * vx + (py - y1) * vy) / len2));
+  return Math.hypot(px - (x1 + vx * t), py - (y1 + vy * t));
+}
+
+function damageRadius(x, y, radius, dmg, dtype, onHit) {
+  for (const m of [...G.monsters]) {
+    const mx = m.fx * TILE + TILE / 2, my = m.fy * TILE + TILE / 2;
+    if (Math.hypot(mx - x, my - y) <= radius) damageMonster(m, dmg, dtype, onHit);
+  }
+}
+
 function fireAbility(idx, tx, ty) {
   const p = G.player;
   const ab = p.abilities[idx];
@@ -608,38 +689,66 @@ function fireAbility(idx, tx, ty) {
   if (isSilenced(p)) return;                 // frozen/stunned can't cast
   const dx = tx - p.px, dy = ty - p.py;
   const ang = Math.atan2(dy, dx);
-  const cd = ab.cd * (1 - p.stats.cdr);
+  const cd = ab.cd * Math.max(0.2, 1 - p.stats.cdr);
   ab.cdLeft = cd;
-  const dmgBase = Math.round((ab.power * (p.stats.dmgMul || 1)) + Math.floor(weaponDamage() * 0.5));
+  const dmgBase = Math.round((ab.power * (p.stats.dmgMul || 1) * (1 + p.stats.abilityPower)) + Math.floor(weaponDamage() * 0.5));
+  const areaMul = 1 + p.stats.area;
+  const shotSpeed = 240 * (1 + p.stats.projectileSpeed);
+  const onHit = ab.onHit ? { ...ab.onHit, dur: ab.onHit.dur * (1 + p.stats.statusDur) } : null;
+  const reach = ab.range * TILE;
+  const aimDist = Math.hypot(dx, dy) || 1;
+  const targetDist = Math.min(reach, aimDist);
+  const targetX = p.px + Math.cos(ang) * targetDist;
+  const targetY = p.py + Math.sin(ang) * targetDist;
   const mk = (a) => ({
-    x: p.px, y: p.py, vx: Math.cos(a) * 240, vy: Math.sin(a) * 240,
-    life: ab.range * TILE / 240, color: ab.color, dmg: dmgBase, dtype: ab.dmgType,
+    x: p.px, y: p.py, vx: Math.cos(a) * shotSpeed, vy: Math.sin(a) * shotSpeed,
+    life: reach / shotSpeed, color: ab.color, dmg: dmgBase, dtype: ab.dmgType,
     pierce: ab.pierce, chain: ab.chain, hitSet: new Set(),
-    onHit: ab.onHit, r: 4,
+    onHit, r: 5, phase: G.rng.int(0, 280), shape: ab.shape,
   });
 
   if (ab.aoe && ab.shape === 'nova') {
     // Solid expanding ring of force — not projectile balls. It sweeps outward and
     // damages every enemy the ring front passes over, once each.
-    const maxR = Math.max(90, ab.range * TILE);
+    const maxR = Math.max(90, reach) * areaMul;
     G.novaRings = G.novaRings || [];
     G.novaRings.push({
       x: p.px, y: p.py, r: 6, maxR, speed: 320, dmg: dmgBase, dtype: ab.dmgType,
-      color: ab.color, onHit: ab.onHit, hitSet: new Set(),
+      color: ab.color, onHit, hitSet: new Set(),
     });
-    G.effects.push({ type: 'ring', x: p.px, y: p.py, r: 0, maxR, life: .35, t: 0, color: ab.color });
+    G.effects.push({ type: 'vfxCast', x: p.px, y: p.py, dtype: ab.dmgType, size: 72 * areaMul, life: .55, t: 0, color: ab.color });
   } else if (ab.shape === 'cleave') {
     // Wide arc in front, with more reach than before.
     for (let i = -2; i <= 2; i++) {
       const a = ang + i * 0.24;
-      G.projectiles.push(Object.assign(mk(a), { life: 0.34, vx: Math.cos(a) * 240, vy: Math.sin(a) * 240 }));
+      G.projectiles.push(Object.assign(mk(a), { life: 0.34, vx: Math.cos(a) * shotSpeed, vy: Math.sin(a) * shotSpeed }));
     }
-    G.effects.push({ type: 'arc', x: p.px, y: p.py, ang, life: .22, t: 0, color: ab.color });
+    G.effects.push({ type: 'arc', x: p.px, y: p.py, ang, dtype: ab.dmgType, life: .32, t: 0, color: ab.color });
+  } else if (ab.shape === 'meteor') {
+    G.abilityZones.push({ kind: 'meteor', x: targetX, y: targetY, t: 0, delay: .75, radius: 58 * areaMul,
+      dmg: dmgBase, dtype: ab.dmgType, color: ab.color, onHit, done: false });
+  } else if (ab.shape === 'vortex') {
+    G.abilityZones.push({ kind: 'vortex', x: targetX, y: targetY, t: 0, life: ab.duration || 3.2,
+      radius: 52 * areaMul, dmg: dmgBase, dtype: ab.dmgType, color: ab.color, onHit, tick: 0 });
+  } else if (ab.shape === 'orbit') {
+    for (let i = 0; i < 3; i++) G.orbitals.push({ angle: i * Math.PI * 2 / 3, radius: 34 * areaMul,
+      t: 0, life: ab.duration || 4.2, dmg: dmgBase, dtype: ab.dmgType, color: ab.color, onHit, hitCd: new Map() });
+  } else if (ab.shape === 'beam') {
+    const x2 = p.px + Math.cos(ang) * reach, y2 = p.py + Math.sin(ang) * reach;
+    for (const m of [...G.monsters]) {
+      const mx = m.fx * TILE + TILE / 2, my = m.fy * TILE + TILE / 2;
+      if (pointSegmentDistance(mx, my, p.px, p.py, x2, y2) <= 14 * areaMul) damageMonster(m, dmgBase, ab.dmgType, onHit);
+    }
+    G.effects.push({ type: 'beam', x: p.px, y: p.py, x2, y2, dtype: ab.dmgType, color: ab.color, life: .32, t: 0 });
+  } else if (ab.shape === 'mine') {
+    G.abilityZones.push({ kind: 'mine', x: targetX, y: targetY, t: 0, life: ab.duration || 8, armed: .5,
+      radius: 52 * areaMul, dmg: dmgBase, dtype: ab.dmgType, color: ab.color, onHit, done: false });
   } else if (ab.multi > 1) {
     for (let i = 0; i < ab.multi; i++) { const a = ang + (i - (ab.multi - 1) / 2) * 0.16; G.projectiles.push(mk(a)); }
   } else {
     G.projectiles.push(mk(ang));
   }
+  G.effects.push({ type: 'vfxCast', x: p.px, y: p.py, dtype: ab.dmgType, size: ab.aoe ? 48 : 34, life: .42, t: 0, color: ab.color });
   // self-buff on cast
   if (ab.selfBuff) { applyStatus(p, ab.selfBuff.status, ab.selfBuff.dur, 1); log(`${STATUS[ab.selfBuff.status].name}!`, STATUS[ab.selfBuff.status].color); }
   Audio.sfx('cast');
@@ -649,7 +758,7 @@ function fireAbility(idx, tx, ty) {
 function meleeSwing() {
   const p = G.player;
   if (p.swingCd > 0) return;
-  p.swingCd = (p.equip.weapon?.stats.spd ? 0.5 / p.equip.weapon.stats.spd : 0.5);
+  p.swingCd = (p.equip.weapon?.stats.spd ? 0.5 / p.equip.weapon.stats.spd : 0.5) / (1 + p.stats.attackSpeed);
   const reach = 34;
   const aim = Math.atan2(mouse.y - VIEW_TILES_Y * TILE / 2, mouse.x - VIEW_TILES_X * TILE / 2);
   const ux = Math.cos(aim), uy = Math.sin(aim);
@@ -666,12 +775,22 @@ function meleeSwing() {
 
 function damageMonster(m, amount, dtype, onHit = null) {
   const p = G.player;
+  if (m.eliteShield > 0) {
+    m.eliteShield--;
+    m.hitFlash = 0.15;
+    G.effects.push({ type: 'vfxHit', x: m.fx * TILE + TILE / 2, y: m.fy * TILE + TILE / 2,
+      dtype: 'cold', size: 42, life: .34, t: 0, color: '#67cbe8' });
+    spawnDamageNumber(m.fx * TILE + TILE / 2, m.fy * TILE + TILE / 2, 'ward', false, 'text');
+    Audio.sfx('hit');
+    return;
+  }
   let dmg = amount * statusMul(p, 'dmgDealtMul');      // player Weaken/Rage
   dmg *= statusMul(m, 'dmgTakenMul');                   // target Vulnerable/Fortify
   const crit = G.rng.chance(p.stats.critChance);
   if (crit) dmg = Math.round(dmg * (1.5 + p.stats.critDmg));
   dmg = Math.round(dmg);
   m.hp -= dmg;
+  if (m.hp > 0 && p.stats.execute > 0 && m.hp / m.maxHp <= p.stats.execute) m.hp = 0;
   m.hitFlash = 0.15;
   m.aggro = true;
   if (p.stats.lifesteal > 0) { p.hp = Math.min(p.maxHp, p.hp + dmg * p.stats.lifesteal); }
@@ -687,29 +806,37 @@ function killMonster(m) {
   G.killCount++;
   gainXp(m.xp);
   // loot roll
-  const dropChance = m.boss ? 1 : 0.35;
+  const dropChance = m.boss || m.treasure ? 1 : Math.min(0.9, 0.35 + (m.elite ? 0.25 : 0) + (m.dropBonus || 0) + G.player.stats.luck);
   if (G.rng.chance(dropChance)) {
-    const mf = (m.boss ? 1.5 : 0.2) + (G.upgradeEffects?.magicFind || 0);
+    const mf = (m.boss ? 1.5 : m.elite ? 0.8 : m.treasure ? 1.1 : 0.2) + (G.upgradeEffects?.magicFind || 0) + G.player.stats.luck;
     const item = generateItem(G.seed, `f${G.floor}_${m.id}_${G.killCount}`, G.floor, mf);
     G.drops.push({ x: m.fx, y: m.fy, item, fx: m.fx, fy: m.fy });
   }
   // gold + hp orbs (healing is scarcer now — you're meant to feel attrition)
-  const gold = G.rng.int(2, 6) + G.floor;
+  const gold = Math.round((G.rng.int(2, 6) + G.floor) * (1 + G.player.stats.goldFind) * (m.treasure ? 3 : 1) * (m.goldMul || 1));
   G.pickups.push({ x: m.fx, y: m.fy, type: 'gold', amt: gold });
   if (G.rng.chance(0.10)) G.pickups.push({ x: m.fx + 0.3, y: m.fy, type: 'hp', amt: 5 + Math.floor(G.floor * 0.4) });
   Audio.sfx('kill');
+  if (m.elite === 'volatile') {
+    const mx = m.fx * TILE + TILE / 2, my = m.fy * TILE + TILE / 2;
+    G.effects.push({ type: 'vfxHit', x: mx, y: my, dtype: 'fire', size: 92, life: .5, t: 0, color: '#ff8b42' });
+    if (Math.hypot(G.player.px - mx, G.player.py - my) < 70) damagePlayer(Math.round(m.dmg * 1.25));
+    screenShake(8);
+  }
   if (m.boss) { log(`${m.name} falls!`, 'var(--gold)'); screenShake(10); }
 }
 
-function damagePlayer(amount, incomingStatus = null) {
+function damagePlayer(amount, incomingStatus = null, source = null) {
   const p = G.player;
   if (p.invuln > 0) return;
   if (G.rng.chance(p.stats.dodge)) { spawnDamageNumber(p.px, p.py, 'dodge', false, 'text'); return; }
+  if (G.rng.chance(p.stats.blockChance)) { spawnDamageNumber(p.px, p.py, 'block', false, 'text'); p.invuln = 0.18; return; }
   // Shield buff absorbs one hit entirely.
   if (hasStatus(p, 'shield')) { delete p.fx_status.shield; spawnDamageNumber(p.px, p.py, 'block', false, 'text'); p.invuln = 0.3; return; }
   let dmg = amount * (100 / (100 + p.stats.armor));
   dmg *= statusMul(p, 'dmgTakenMul');                  // Fortify (down) / Vulnerable (up)
   p.hp -= dmg;
+  if (source && p.stats.thorns > 0 && source.hp > 0) damageMonster(source, p.stats.thorns, 'phys');
   p.hitFlash = 0.2; p.invuln = 0.25;
   if (incomingStatus && G.rng.chance(incomingStatus.chance ?? 1)) applyStatus(p, incomingStatus.status, incomingStatus.dur, 1);
   // onHit defensive procs: taking damage can trigger a shield/fortify/regen buff.
@@ -967,9 +1094,32 @@ function enemyShoot(m, mx, my, opts = {}) {
       life: opts.life || 2.2, dmg: Math.round(m.dmg * (opts.dmgMul || 1.0)),
       color, ptype: m.proj, r: opts.r || 5, arc: opts.arc || false,
       onHit: opts.onHit || PROJ_STATUS[m.proj] || null,
+      owner: m,
     });
   }
-  G.effects.push({ type: 'hit', x: mx, y: my, life: .15, t: 0, color });
+  G.effects.push({ type: 'vfxCast', x: mx, y: my, dtype: m.proj || 'phys', size: 34, life: .32, t: 0, color });
+}
+
+function spawnSummon(parent) {
+  if (G.monsters.length >= 44 || parent.summonCount >= 3) return;
+  const key = G.floor >= 5 && G.rng.chance(.35) ? 'leech' : 'grub';
+  const offsets = [[1,0],[-1,0],[0,1],[0,-1]];
+  const off = G.rng.pick(offsets);
+  const fx = parent.fx + off[0], fy = parent.fy + off[1];
+  if (isWall(Math.floor(fx), Math.floor(fy))) return;
+  const maxHp = Math.round(20 + parent.level * 7);
+  G.summonSerial = (G.summonSerial || 0) + 1;
+  G.monsters.push({
+    id: `summon_${G.floor}_${G.summonSerial}`, key, name: key === 'leech' ? 'Summoned Blood Leech' : 'Bonebound Grub',
+    color: key === 'leech' ? '#cf4d56' : '#8fae6b', glyph: key === 'leech' ? 'L' : 'g', fx, fy, x: fx, y: fy,
+    hp: maxHp, maxHp, dmg: Math.round(4 + parent.level * 2.2), spd: key === 'leech' ? 1.3 : 1.05,
+    level: parent.level, xp: Math.round(2 + parent.level), behavior: key === 'leech' ? 'leech' : 'chaser',
+    proj: null, special: null, hitFlash: 0, aggro: true, atkCd: .4, chargeState: 'idle', chargeT: 0,
+    telegraph: 0, cvx: 0, cvy: 0, dodgeCd: 0, retreating: false, retreatT: 0, retreatCd: 0,
+  });
+  parent.summonCount++;
+  G.effects.push({ type: 'vfxCast', x: fx * TILE + TILE / 2, y: fy * TILE + TILE / 2,
+    dtype: 'void', size: 54, life: .55, t: 0, color: '#9c6ed0' });
 }
 
 // ---------- monster AI ----------
@@ -987,10 +1137,22 @@ function updateMonsters(dt) {
     const dist = Math.hypot(p.px - mx, p.py - my);
     const los = hasLOS(mx, my, p.px, p.py);
     if (m.hitFlash > 0) m.hitFlash -= dt;
+    const telegraphBefore = m.telegraph || 0;
     if (m.telegraph > 0) m.telegraph -= dt;
+    const telegraphFinished = telegraphBefore > 0 && m.telegraph <= 0;
     if (m.atkCd > 0) m.atkCd -= dt;
+    if (m.summonCd > 0) m.summonCd -= dt;
+    if (m.dormant) {
+      if (dist < 92 || m.hitFlash > 0) {
+        m.dormant = false;
+        m.aggro = true;
+        m.behavior = 'charger';
+        G.effects.push({ type: 'vfxCast', x: mx, y: my, dtype: 'fire', size: 64, life: .48, t: 0, color: m.color });
+        log('The treasure chest has teeth!', '#e1a84c');
+      }
+    }
     // Aggro on sight OR proximity; once aggroed, stays (hunts via flow field).
-    if ((dist < 260 && los) || dist < 130) m.aggro = true;
+    if (!m.dormant && ((dist < 260 && los) || dist < 130)) m.aggro = true;
 
     tickStatus(m, dt,
       (dmg, color) => { m.hp -= dmg; spawnDamageNumber(mx, my, Math.round(dmg), false, color === '#8fd14b' ? 'poison' : 'fire'); if (m.hp <= 0) killMonster(m); },
@@ -1014,7 +1176,7 @@ function updateMonsters(dt) {
         // fighting retreat: back toward open space, and STILL attack if ranged
         const ra = bestRetreatDir(mx, my);
         moveMob(m, mx + Math.cos(ra) * TILE * 4, my + Math.sin(ra) * TILE * 4, spd * 1.1, dt);
-        if (!silenced && (m.behavior === 'caster' || m.behavior === 'bomber' || m.behavior === 'warden')
+        if (!silenced && (m.behavior === 'caster' || m.behavior === 'bomber' || m.behavior === 'sentinel' || m.behavior === 'summoner')
             && los && m.atkCd <= 0) {
           enemyShoot(m, mx, my, m.special === 'volley' ? { count: 3, spread: 0.24, speed: 230 } : { speed: 235 });
           m.atkCd = 1.3;
@@ -1059,7 +1221,7 @@ function updateMonsters(dt) {
           }
           if (m.dodgeCd > 0) m.dodgeCd -= dt;
           if (!silenced && los && dist < 320 && m.atkCd <= 0 && m.telegraph <= 0) m.telegraph = 0.28;
-          if (m.telegraph > 0 && m.telegraph - dt <= 0 && los && !silenced) {
+          if (telegraphFinished && los && !silenced) {
             if (m.special === 'volley') enemyShoot(m, mx, my, { count: 3, spread: 0.24, speed: 230 });
             else enemyShoot(m, mx, my, { speed: 245 });
             m.atkCd = 1.1 + Math.random() * 0.5;
@@ -1073,9 +1235,61 @@ function updateMonsters(dt) {
           if (!silenced && dist < 280 && m.atkCd <= 0) { enemyShoot(m, mx, my, { speed: 165, arc: true, life: 2.6, dmgMul: 1.15 }); m.atkCd = 1.2; }
           break;
         }
+        case 'leech': {
+          if (dist > 42) {
+            const fp = flankPoint(m, 48);
+            pathToPoint(m, fp.x, fp.y, spd * 1.08, dt);
+          } else pathToPlayer(m, spd, dt);
+          break;
+        }
+        case 'sentinel': {
+          const ideal = 175;
+          if (!los || dist > ideal + 70) pathToPlayer(m, spd, dt);
+          else if (dist < ideal - 55) moveMob(m, p.px, p.py, spd, dt, -1);
+          if (telegraphFinished && m.telegraphKind === 'beam' && !silenced) {
+            enemyShoot(m, mx, my, { speed: 390, life: 1.1, dmgMul: 1.35, r: 7 });
+            G.effects.push({ type: 'beam', x: mx, y: my, x2: m.beamX, y2: m.beamY,
+              dtype: 'lightning', color: '#55d7dc', life: .25, t: 0 });
+            m.telegraphKind = null;
+          } else if (!silenced && los && dist < 340 && m.atkCd <= 0 && m.telegraph <= 0) {
+            m.telegraph = .62;
+            m.telegraphKind = 'beam';
+            m.beamX = p.px;
+            m.beamY = p.py;
+            m.atkCd = 2.7;
+          }
+          break;
+        }
+        case 'summoner': {
+          const ideal = 190;
+          if (!los || dist > ideal + 65) pathToPlayer(m, spd, dt);
+          else if (dist < ideal - 65) moveMob(m, p.px, p.py, spd, dt, -1);
+          if (!silenced && m.summonCd <= 0) {
+            spawnSummon(m);
+            m.summonCd = 5.5 + G.rng.float(0, 1.5);
+          }
+          if (!silenced && los && dist < 330 && m.atkCd <= 0) {
+            enemyShoot(m, mx, my, { count: 2, spread: .18, speed: 205, dmgMul: .85 });
+            m.atkCd = 1.8;
+          }
+          break;
+        }
         case 'boss': {
+          if (!m.enraged && m.hp < m.maxHp * .5) {
+            m.enraged = true;
+            m.spd *= 1.25;
+            m.dmg = Math.round(m.dmg * 1.2);
+            G.effects.push({ type: 'vfxCast', x: mx, y: my, dtype: m.proj || 'fire', size: 110, life: .8, t: 0, color: m.color });
+            log(`${m.name} enters a second phase!`, '#ff8b42');
+            screenShake(10);
+          }
           if (dist > 40) pathToPlayer(m, spd, dt);
-          if (!silenced && m.atkCd <= 0 && los) { if (dist < 360) enemyShoot(m, mx, my, { count: 5, spread: 0.30, speed: 210 }); m.atkCd = 1.4; }
+          if (!silenced && m.atkCd <= 0 && los) {
+            m.atkCycle = (m.atkCycle || 0) + 1;
+            if (dist < 360) enemyShoot(m, mx, my, { count: m.enraged ? 7 : 5, spread: m.enraged ? .24 : .30, speed: m.enraged ? 245 : 210 });
+            if (m.enraged && m.atkCycle % 3 === 0) spawnSummon(m);
+            m.atkCd = m.enraged ? 1.05 : 1.4;
+          }
           break;
         }
         default: { // chaser
@@ -1094,7 +1308,7 @@ function updateMonsters(dt) {
               m.telegraph = 0.6; m.telegraphKind = 'slam'; m.atkCd = 3.2;
             }
             // Resolve whichever telegraph finishes.
-            if (m.telegraph > 0 && m.telegraph - dt <= 0 && !silenced) {
+            if (telegraphFinished && !silenced) {
               if (m.telegraphKind === 'toss') {
                 // heavy slow-moving boulder: earthy, big, applies a strong slow so
                 // the lumbering brute can close the distance on a fleeing player
@@ -1104,7 +1318,7 @@ function updateMonsters(dt) {
                 });
               } else if (m.telegraphKind === 'slam' && dist < 75) {
                 // big earthquake: wide radius, heavy hit, screen shake
-                damagePlayer(Math.round(m.dmg * 1.9));
+                damagePlayer(Math.round(m.dmg * 1.9), null, m);
                 G.effects.push({ type: 'ring', x: mx, y: my, r: 0, maxR: 95, life: .4, t: 0, color: '#c99a5a' });
                 G.effects.push({ type: 'ring', x: mx, y: my, r: 0, maxR: 70, life: .3, t: 0, color: '#ff8a5c' });
                 screenShake(11);
@@ -1132,11 +1346,17 @@ function updateMonsters(dt) {
     // melee contact damage
     if (dist < 18 && m.behavior !== 'boss') {
       if ((m.touchCd = (m.touchCd || 0) - dt) <= 0) {
-        damagePlayer(m.behavior === 'charger' && m.chargeState === 'dash' ? Math.round(m.dmg * 1.6) : m.dmg);
+        const contactDmg = m.behavior === 'charger' && m.chargeState === 'dash' ? Math.round(m.dmg * 1.6) : m.dmg;
+        const touchStatus = m.behavior === 'leech' ? { status: 'bleed', chance: 1, dur: 2.8 } : null;
+        damagePlayer(contactDmg, touchStatus, m);
+        if (m.behavior === 'leech' || m.elite === 'vampiric') {
+          m.hp = Math.min(m.maxHp, m.hp + contactDmg * (m.elite === 'vampiric' ? .5 : .32));
+          G.effects.push({ type: 'vfxCast', x: mx, y: my, dtype: 'poison', size: 34, life: .35, t: 0, color: '#ef5263' });
+        }
         m.touchCd = 0.5;
       }
     } else if (dist < 20 && m.boss) {
-      if ((m.touchCd = (m.touchCd || 0) - dt) <= 0) { damagePlayer(m.dmg); m.touchCd = 0.45; }
+      if ((m.touchCd = (m.touchCd || 0) - dt) <= 0) { damagePlayer(m.dmg, null, m); m.touchCd = 0.45; }
     }
   }
 }
@@ -1149,8 +1369,8 @@ function updateEnemyProjectiles(dt) {
     if (pr.arc) { pr.vx *= 0.985; pr.vy *= 0.985; } // arcing shots decelerate
     if (isWall(Math.floor(pr.x / TILE), Math.floor(pr.y / TILE))) pr.life = 0;
     if (Math.hypot(pr.x - p.px, pr.y - p.py) < 11) {
-      damagePlayer(pr.dmg, pr.onHit);
-      G.effects.push({ type: 'hit', x: pr.x, y: pr.y, life: .18, t: 0, color: pr.color });
+      damagePlayer(pr.dmg, pr.onHit, pr.owner);
+      G.effects.push({ type: 'vfxHit', x: pr.x, y: pr.y, dtype: pr.ptype || 'phys', size: 42, life: .34, t: 0, color: pr.color });
       pr.life = 0;
     }
   }
@@ -1169,7 +1389,7 @@ function updateProjectiles(dt) {
       if (Math.hypot(mx - pr.x, my - pr.y) < 12) {
         pr.hitSet.add(m.id);
         damageMonster(m, pr.dmg, pr.dtype, pr.onHit);
-        G.effects.push({ type: 'hit', x: pr.x, y: pr.y, life: .18, t: 0, color: pr.color });
+        G.effects.push({ type: 'vfxHit', x: pr.x, y: pr.y, dtype: pr.dtype, size: 42, life: .34, t: 0, color: pr.color });
         // chain: retarget to nearest unhit monster
         if (pr.chain > 0) {
           pr.chain--;
@@ -1199,11 +1419,68 @@ function updateNovaRings(dt) {
       if (d <= ring.r + band && d >= ring.r - band) {
         ring.hitSet.add(m.id);
         damageMonster(m, ring.dmg, ring.dtype, ring.onHit);
-        G.effects.push({ type: 'hit', x: mx, y: my, life: .18, t: 0, color: ring.color });
+        G.effects.push({ type: 'vfxHit', x: mx, y: my, dtype: ring.dtype, size: 42, life: .34, t: 0, color: ring.color });
       }
     }
   }
   G.novaRings = G.novaRings.filter((r) => r.r < r.maxR);
+}
+
+function updateAbilityZones(dt) {
+  for (const z of G.abilityZones || []) {
+    z.t += dt;
+    if (z.kind === 'meteor' && !z.done && z.t >= z.delay) {
+      damageRadius(z.x, z.y, z.radius, z.dmg, z.dtype, z.onHit);
+      G.effects.push({ type: 'vfxHit', x: z.x, y: z.y, dtype: z.dtype, size: z.radius * 2.25, life: .56, t: 0, color: z.color });
+      G.effects.push({ type: 'ring', x: z.x, y: z.y, maxR: z.radius, life: .38, t: 0, color: z.color });
+      z.done = true;
+      screenShake(9);
+    } else if (z.kind === 'vortex') {
+      z.tick -= dt;
+      for (const m of [...G.monsters]) {
+        const mx = m.fx * TILE + TILE / 2, my = m.fy * TILE + TILE / 2;
+        const dist = Math.hypot(mx - z.x, my - z.y);
+        if (dist <= z.radius && dist > 8) moveMob(m, z.x, z.y, 34, dt);
+      }
+      if (z.tick <= 0) {
+        damageRadius(z.x, z.y, z.radius, z.dmg, z.dtype, z.onHit);
+        z.tick = .42;
+      }
+    } else if (z.kind === 'mine' && !z.done && z.t >= z.armed) {
+      const triggered = G.monsters.some((m) => Math.hypot(m.fx * TILE + TILE / 2 - z.x, m.fy * TILE + TILE / 2 - z.y) < 25);
+      if (triggered) {
+        damageRadius(z.x, z.y, z.radius, z.dmg, z.dtype, z.onHit);
+        G.effects.push({ type: 'vfxHit', x: z.x, y: z.y, dtype: z.dtype, size: z.radius * 2.1, life: .5, t: 0, color: z.color });
+        z.done = true;
+        screenShake(6);
+      }
+    }
+  }
+  G.abilityZones = (G.abilityZones || []).filter((z) => {
+    if (z.kind === 'meteor') return !z.done;
+    if (z.kind === 'mine') return !z.done && z.t < z.life;
+    return z.t < z.life;
+  });
+
+  for (const orb of G.orbitals || []) {
+    orb.t += dt;
+    orb.angle += dt * 3.5;
+    orb.x = G.player.px + Math.cos(orb.angle) * orb.radius;
+    orb.y = G.player.py + Math.sin(orb.angle) * orb.radius;
+    for (const [id, time] of orb.hitCd) {
+      if (time <= dt) orb.hitCd.delete(id); else orb.hitCd.set(id, time - dt);
+    }
+    for (const m of [...G.monsters]) {
+      if (orb.hitCd.has(m.id)) continue;
+      const mx = m.fx * TILE + TILE / 2, my = m.fy * TILE + TILE / 2;
+      if (Math.hypot(mx - orb.x, my - orb.y) < 18) {
+        damageMonster(m, orb.dmg, orb.dtype, orb.onHit);
+        orb.hitCd.set(m.id, .5);
+        G.effects.push({ type: 'vfxHit', x: orb.x, y: orb.y, dtype: orb.dtype, size: 34, life: .28, t: 0, color: orb.color });
+      }
+    }
+  }
+  G.orbitals = (G.orbitals || []).filter((orb) => orb.t < orb.life);
 }
 
 // ---------- pickups / loot ----------
@@ -1211,7 +1488,7 @@ function updatePickups() {
   const p = G.player;
   for (const pu of G.pickups) {
     const px = pu.x * TILE + TILE / 2, py = pu.y * TILE + TILE / 2;
-    if (Math.hypot(px - p.px, py - p.py) < 22) {
+    if (Math.hypot(px - p.px, py - p.py) < 22 + p.stats.pickupRadius) {
       if (pu.type === 'gold') { G.gold += pu.amt; }
       else if (pu.type === 'hp') { p.hp = Math.min(p.maxHp, p.hp + pu.amt); }
       Audio.sfx('pickup');
@@ -1222,7 +1499,7 @@ function updatePickups() {
 
   for (const d of G.drops) {
     const dx = d.x * TILE + TILE / 2, dy = d.y * TILE + TILE / 2;
-    if (Math.hypot(dx - p.px, dy - p.py) < 20) {
+    if (Math.hypot(dx - p.px, dy - p.py) < 20 + p.stats.pickupRadius) {
       G.player.bag.push(d.item);
       log(`Picked up ${d.item.name}`, d.item.rarityColor);
       d.dead = true;
@@ -1428,6 +1705,7 @@ function update(dt) {
   updateMonsters(dt);
   updateProjectiles(dt);
   updateNovaRings(dt);
+  updateAbilityZones(dt);
   updateEnemyProjectiles(dt);
   updatePickups();
   checkStairs();
@@ -1543,6 +1821,35 @@ function draw() {
     ctx.shadowBlur=0;
   }
 
+  // persistent ability fields live on the ground beneath actors.
+  for (const z of G.abilityZones || []) {
+    const sx = z.x - camX, sy = z.y - camY;
+    if (z.kind === 'meteor') {
+      const charge = Math.min(1, z.t / z.delay);
+      const markerR = z.radius * (.72 + charge * .28);
+      ctx.save(); ctx.fillStyle = z.color; ctx.globalAlpha = .1 + charge * .06;
+      ctx.beginPath(); ctx.arc(sx, sy, markerR, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = z.color; ctx.globalAlpha = .55 + charge * .3; ctx.lineWidth = 2 + charge * 1.5;
+      ctx.beginPath(); ctx.arc(sx, sy, markerR, 0, Math.PI * 2); ctx.stroke();
+      for (let i = 0; i < 8; i++) {
+        const a = i * Math.PI / 4 + charge * .45;
+        ctx.beginPath(); ctx.moveTo(sx + Math.cos(a) * markerR * .68, sy + Math.sin(a) * markerR * .68);
+        ctx.lineTo(sx + Math.cos(a) * markerR * .9, sy + Math.sin(a) * markerR * .9); ctx.stroke();
+      }
+      ctx.restore();
+      drawVfx(z.dtype, Math.min(3, Math.floor(charge * 4)), sx, sy, z.radius * 2.2, -charge * 2, .78);
+    } else if (z.kind === 'vortex') {
+      const fade = Math.min(1, (z.life - z.t) * 2);
+      ctx.save(); ctx.globalAlpha = .16 * fade; ctx.fillStyle = z.color; ctx.beginPath(); ctx.arc(sx, sy, z.radius, 0, 7); ctx.fill(); ctx.restore();
+      drawVfx(z.dtype, effectFrame(z.t * 1000, 0, 8, 85), sx, sy, z.radius * 1.8, -z.t * 2.2, .64 * fade);
+    } else if (z.kind === 'mine') {
+      const armed = z.t >= z.armed;
+      ctx.save(); ctx.strokeStyle = z.color; ctx.globalAlpha = armed ? .8 : .32; ctx.lineWidth = armed ? 2 : 1;
+      ctx.beginPath(); ctx.arc(sx, sy, 13 + Math.sin(Date.now() / 120) * 2, 0, 7); ctx.stroke(); ctx.restore();
+      drawVfx(z.dtype, effectFrame(z.t * 1000, 0, 4, 100), sx, sy, 38, z.t * 1.5, armed ? .75 : .4);
+    }
+  }
+
   // monsters
   for (const m of G.monsters) {
     const sx=Math.round(m.fx*TILE+TILE/2-camX), sy=Math.round(m.fy*TILE+TILE/2-camY);
@@ -1558,9 +1865,19 @@ function draw() {
     const now = Date.now();
     const phase = (Number(m.id) || Math.round(m.fx * 13 + m.fy * 17)) * 37;
     const walkCell = m.moving ? movementCell(now, HD_MOB_FRAME_MS[m.key] || 125, phase) : [0, 0];
+    if (m.elite) {
+      ctx.save(); ctx.strokeStyle = m.color; ctx.globalAlpha = .38 + .18 * Math.sin(now / 160 + phase); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.ellipse(sx, sy + dh * .22, dw * .42, dh * .13, 0, 0, 7); ctx.stroke();
+      if (m.eliteShield > 0) { ctx.globalAlpha = .55; ctx.beginPath(); ctx.arc(sx, sy, Math.max(dw, dh) * .48, 0, 7); ctx.stroke(); }
+      ctx.restore();
+    }
     // telegraph flash before a special attack — the player's cue to react
     if (m.telegraph > 0) {
-      if (m.telegraphKind === 'slam') {
+      if (m.telegraphKind === 'beam') {
+        ctx.save(); ctx.strokeStyle = '#79f4ff'; ctx.shadowColor = '#55d7dc'; ctx.shadowBlur = 8;
+        ctx.globalAlpha = .35 + .45 * Math.abs(Math.sin(now / 45)); ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(m.beamX - camX, m.beamY - camY); ctx.stroke(); ctx.restore();
+      } else if (m.telegraphKind === 'slam') {
         // earthquake wind-up: a large growing danger ring on the ground you must leave
         const t = 1 - m.telegraph / 0.6;
         ctx.strokeStyle = '#e0a850'; ctx.lineWidth = 3; ctx.globalAlpha = 0.5 + 0.5 * Math.abs(Math.sin(Date.now()/50));
@@ -1615,19 +1932,29 @@ function draw() {
     ctx.beginPath(); ctx.arc(sx, sy, ring.r - 5, 0, Math.PI * 2); ctx.stroke();
     ctx.globalAlpha = 1; ctx.shadowBlur = 0;
   }
+  // orbiting attacks
+  for (const orb of G.orbitals || []) {
+    const sx = orb.x - camX, sy = orb.y - camY;
+    drawVfx(orb.dtype, effectFrame(orb.t * 1000, 0, 8, 70), sx, sy, 38, orb.angle + Math.PI / 2, .9);
+  }
   // projectiles (player)
   for (const pr of G.projectiles) {
     const sx=pr.x-camX, sy=pr.y-camY;
-    ctx.shadowColor=pr.color; ctx.shadowBlur=8; ctx.fillStyle=pr.color;
-    ctx.beginPath(); ctx.arc(sx,sy,4,0,7); ctx.fill(); ctx.shadowBlur=0;
+    const ang = Math.atan2(pr.vy, pr.vx);
+    ctx.save(); ctx.strokeStyle = pr.color; ctx.globalAlpha = .36; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(sx - Math.cos(ang) * 16, sy - Math.sin(ang) * 16); ctx.lineTo(sx, sy); ctx.stroke(); ctx.restore();
+    if (!drawVfx(pr.dtype, effectFrame(Date.now() + pr.phase, 0, 4, 62), sx, sy, pr.shape === 'cleave' ? 34 : 28, ang, .92)) {
+      ctx.shadowColor=pr.color; ctx.shadowBlur=8; ctx.fillStyle=pr.color; ctx.beginPath(); ctx.arc(sx,sy,4,0,7); ctx.fill(); ctx.shadowBlur=0;
+    }
   }
   // projectiles (enemy) — drawn with a dark core so they read as incoming threats
   for (const pr of G.eproj) {
     const sx=pr.x-camX, sy=pr.y-camY;
-    ctx.shadowColor=pr.color; ctx.shadowBlur=9; ctx.fillStyle=pr.color;
-    ctx.beginPath(); ctx.arc(sx,sy,pr.r,0,7); ctx.fill();
-    ctx.shadowBlur=0; ctx.fillStyle='rgba(0,0,0,.45)';
-    ctx.beginPath(); ctx.arc(sx,sy,pr.r*0.45,0,7); ctx.fill();
+    const ang = Math.atan2(pr.vy, pr.vx);
+    if (!drawVfx(pr.ptype || 'phys', effectFrame(Date.now(), 0, 4, 76), sx, sy, 25 + pr.r * 2, ang, .9)) {
+      ctx.shadowColor=pr.color; ctx.shadowBlur=9; ctx.fillStyle=pr.color; ctx.beginPath(); ctx.arc(sx,sy,pr.r,0,7); ctx.fill();
+      ctx.shadowBlur=0; ctx.fillStyle='rgba(0,0,0,.45)'; ctx.beginPath(); ctx.arc(sx,sy,pr.r*0.45,0,7); ctx.fill();
+    }
   }
 
   // effects
@@ -1697,9 +2024,27 @@ function draw() {
 function drawEffect(e, camX, camY) {
   const sx=e.x-camX, sy=e.y-camY, prog=e.t/e.life;
   ctx.globalAlpha=1-prog;
-  if (e.type==='ring'){ ctx.strokeStyle=e.color; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(sx,sy,prog*e.maxR,0,7); ctx.stroke(); }
+  if (e.type==='vfxHit') {
+    drawVfx(e.dtype || 'phys', 4 + Math.min(3, Math.floor(prog * 4)), sx, sy, (e.size || 44) * (1 + prog * .18), prog * .7, 1 - prog * .35);
+  }
+  else if (e.type==='vfxCast') {
+    drawVfx(e.dtype || 'phys', Math.min(7, Math.floor(prog * 8)), sx, sy, e.size || 42, -prog * .8, 1 - prog * .45);
+  }
+  else if (e.type==='beam') {
+    const ex = e.x2 - camX, ey = e.y2 - camY;
+    ctx.save(); ctx.globalAlpha = 1 - prog; ctx.strokeStyle = e.color; ctx.shadowColor = e.color; ctx.shadowBlur = 14;
+    ctx.lineWidth = 10 * (1 - prog) + 2; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
+    ctx.strokeStyle = '#fff'; ctx.globalAlpha *= .65; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke(); ctx.restore();
+    for (let i = 1; i <= 4; i++) drawVfx(e.dtype || 'lightning', 4 + Math.min(3, Math.floor(prog * 4)),
+      sx + (ex - sx) * i / 5, sy + (ey - sy) * i / 5, 28, Math.atan2(ey - sy, ex - sx), .55 * (1 - prog));
+  }
+  else if (e.type==='ring'){ ctx.strokeStyle=e.color; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(sx,sy,prog*e.maxR,0,7); ctx.stroke(); }
   else if (e.type==='hit'){ ctx.fillStyle=e.color; ctx.beginPath(); ctx.arc(sx,sy,6*(1-prog)+2,0,7); ctx.fill(); }
-  else if (e.type==='swing'||e.type==='arc'){ ctx.strokeStyle=e.color; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(sx,sy,26,e.ang-0.8,e.ang+0.8); ctx.stroke(); }
+  else if (e.type==='swing'||e.type==='arc'){
+    ctx.strokeStyle=e.color; ctx.shadowColor=e.color; ctx.shadowBlur=8; ctx.lineWidth=5*(1-prog)+1;
+    ctx.beginPath(); ctx.arc(sx,sy,26+prog*9,e.ang-0.8,e.ang+0.8); ctx.stroke(); ctx.shadowBlur=0;
+    if (e.dtype) drawVfx(e.dtype, Math.min(7, Math.floor(prog*8)), sx+Math.cos(e.ang)*24, sy+Math.sin(e.ang)*24, 42, e.ang, .7*(1-prog));
+  }
   else if (e.type==='levelup'){ ctx.strokeStyle='#6fe3c4'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(sx,sy,prog*40,0,7); ctx.stroke(); }
   ctx.globalAlpha=1;
 }
@@ -1712,7 +2057,7 @@ function updateHUD() {
   document.getElementById('lvlText').textContent = `LVL ${p.level}`;
   document.getElementById('xpBar').style.width = (p.xp / p.xpNext * 100) + '%';
   document.getElementById('goldStat').textContent = `◈ ${G.gold} SHARDS`;
-  document.getElementById('floorTag').textContent = `FLOOR ${String(G.floor).padStart(2, '0')}`;
+  document.getElementById('floorTag').textContent = `FLOOR ${String(G.floor).padStart(2, '0')}${G.floorModifier ? ` · ${G.floorModifier.name}` : ''}`;
   // player status chips
   const sc = document.getElementById('statusChips');
   if (sc) {
@@ -1722,7 +2067,7 @@ function updateHUD() {
   // ability cooldowns
   p.abilities.forEach((ab, i) => {
     const el = document.getElementById('cd' + i);
-    if (el) { const cd = ab.cd * (1 - p.stats.cdr); el.style.transform = `scaleY(${Math.max(0, ab.cdLeft / cd)})`; }
+    if (el) { const cd = ab.cd * Math.max(0.2, 1 - p.stats.cdr); el.style.transform = `scaleY(${Math.max(0, ab.cdLeft / cd)})`; }
   });
 }
 
@@ -1736,8 +2081,8 @@ function renderAbilityBar() {
     s.className = 'slot';
     s.style.borderColor = ab.color;
     s.style.setProperty('--slot-color', ab.color);
-    const iconCol = HD_ABILITY_COL[ab.shape] ?? 0;
-    s.innerHTML = `<span class="k">${keyLabels[i]||''}</span><span class="ability-art" style="background-position:${atlasPosition(iconCol,0,6,3)}"></span><span class="nm">${ab.shapeName}</span><span class="cdfill" id="cd${i}" style="transform:scaleY(0)"></span>`;
+    const iconCell = HD_ABILITY_CELL[ab.shape] || [0, 0];
+    s.innerHTML = `<span class="k">${keyLabels[i]||''}</span><span class="ability-art" style="background-position:${atlasPosition(iconCell[0],iconCell[1],6,3)}"></span><span class="nm">${ab.shapeName}</span><span class="cdfill" id="cd${i}" style="transform:scaleY(0)"></span>`;
     bar.appendChild(s);
   });
   if (p.abilities.length === 0) {
@@ -1810,6 +2155,9 @@ function renderInv() {
     `Max HP: ${s.maxHp}`, `Armor: ${s.armor}`, `Crit: ${Math.round(s.critChance*100)}% (x${(1.5+s.critDmg).toFixed(1)})`,
     `Lifesteal: ${Math.round(s.lifesteal*100)}%`, `Move Speed: +${Math.round(s.moveSpeed*100)}%`,
     `Dodge: ${Math.round(s.dodge*100)}%`, `Cooldown Red.: ${Math.round(s.cdr*100)}%`,
+    `Ability Power: +${Math.round(s.abilityPower*100)}%`, `Ability Area: +${Math.round(s.area*100)}%`,
+    `Attack Speed: +${Math.round(s.attackSpeed*100)}%`, `Block: ${Math.round(s.blockChance*100)}%`,
+    `Loot Luck: +${Math.round(s.luck*100)}%`, `Thorns: ${Math.round(s.thorns)}`,
   ].map((x) => `<div>${x}</div>`).join('');
 
   const bag = document.getElementById('bag'); bag.innerHTML = '';
