@@ -268,7 +268,10 @@ const Audio = (() => {
 function resize() {
   const cw = VIEW_TILES_X * TILE, ch = VIEW_TILES_Y * TILE;
   cv.width = cw * DPR; cv.height = ch * DPR;
-  const scale = Math.min(window.innerWidth / cw, window.innerHeight / ch);
+  // On narrow portrait screens, fill the height and let #game crop the wide
+  // camera around its centered hero. Landscape and desktop retain full framing.
+  const portraitCrop = window.innerWidth <= 560 && window.innerHeight > window.innerWidth;
+  const scale = portraitCrop ? window.innerHeight / ch : Math.min(window.innerWidth / cw, window.innerHeight / ch);
   cv.style.width = cw * scale + 'px';
   cv.style.height = ch * scale + 'px';
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -1367,6 +1370,16 @@ function draw() {
       // deterministic flagstone variant per tile
       const variant = (tx * 7 + ty * 13) & 3;
       ctx.drawImage(SPR.floor[variant], sx, sy, TILE, TILE);
+      // A hairline of reflected light where carved stone meets the dark.
+      // It makes room silhouettes legible without flattening the pixel art.
+      if (G.grid[ty - 1]?.[tx] === T.WALL) {
+        ctx.fillStyle = 'rgba(128,176,178,.09)';
+        ctx.fillRect(sx, sy, TILE, 1);
+      }
+      if (((tx * 29 + ty * 17) & 31) === 0) {
+        ctx.fillStyle = 'rgba(116,243,207,.08)';
+        ctx.fillRect(sx + 4, sy + 5, 1, 1);
+      }
       if (cell === T.STAIRS) { const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 300); ctx.globalAlpha = pulse; ctx.drawImage(SPR.stairs, sx, sy, TILE, TILE); ctx.globalAlpha = 1; }
       if (cell === T.ENTRY) ctx.drawImage(SPR.entry, sx, sy, TILE, TILE);
     }
@@ -1380,7 +1393,26 @@ function draw() {
       if (!edge) continue;
       const sx = Math.round(tx*TILE-camX), sy=Math.round(ty*TILE-camY);
       ctx.drawImage(SPR.wall, sx, sy, TILE, TILE);
+      if (G.grid[ty + 1]?.[tx] !== T.WALL) {
+        ctx.fillStyle = 'rgba(2,4,8,.58)'; ctx.fillRect(sx, sy + TILE - 2, TILE, 3);
+        ctx.fillStyle = 'rgba(122,153,166,.16)'; ctx.fillRect(sx, sy + TILE - 2, TILE, 1);
+      }
     }
+
+  // Slow seed-motes drift through open rooms. Their world positions are
+  // deterministic, so they feel atmospheric rather than like UI confetti.
+  const moteTime = Date.now() / 1000;
+  for (let i = 0; i < 34; i++) {
+    const wx = (i * 173.7 + moteTime * (3.2 + (i % 3))) % (MAP_W * TILE);
+    const wy = (i * 97.3 + Math.sin(moteTime * .38 + i) * 13 + MAP_H * TILE) % (MAP_H * TILE);
+    const tx = Math.floor(wx / TILE), ty = Math.floor(wy / TILE);
+    if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H || G.grid[ty][tx] === T.WALL) continue;
+    const sx = Math.round(wx - camX), sy = Math.round(wy - camY);
+    if (sx < 0 || sy < 0 || sx > cv.width || sy > cv.height) continue;
+    const twinkle = .12 + .16 * (1 + Math.sin(moteTime * 1.4 + i * 2.1)) / 2;
+    ctx.fillStyle = `rgba(${i % 5 === 0 ? '169,122,255' : '116,243,207'},${twinkle})`;
+    ctx.fillRect(sx, sy, i % 7 === 0 ? 2 : 1, 1);
+  }
 
   // pickups
   for (const pu of G.pickups) {
@@ -1434,6 +1466,9 @@ function draw() {
       }
     }
     if (m.chargeState === 'dash') { ctx.shadowColor = m.color; ctx.shadowBlur = 14; }
+    // Grounding shadow keeps larger sprites from appearing to float over tiles.
+    ctx.save(); ctx.globalAlpha = m.boss ? .5 : .34; ctx.fillStyle = '#020306';
+    ctx.beginPath(); ctx.ellipse(sx, sy + (m.boss ? 16 : 10), m.boss ? 22 : 13, m.boss ? 7 : 4, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
     // face the player: flip horizontally if player is to the left
     const faceLeft = G.player.px < (m.fx*TILE+TILE/2);
     ctx.save();
@@ -1496,6 +1531,11 @@ function draw() {
     const faceLeft = p.dir.x < -0.1;
     const hero = characterById(p.characterId);
     const hspr = frameFor(SPR.hero?.[p.characterId] || SPR.hero?.wanderer || SPR.hero, p.moving ? Date.now()/60 : 0);  // faster stride while moving
+    // A restrained sigil under the hero makes the focal point instantly clear.
+    ctx.save(); ctx.globalAlpha = .22 + Math.sin(Date.now()/420) * .035; ctx.strokeStyle = hero.color || '#6fe3c4'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.ellipse(psx, psy + 10, 15, 6, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = .09; ctx.beginPath(); ctx.moveTo(psx - 10, psy + 10); ctx.lineTo(psx, psy + 3); ctx.lineTo(psx + 10, psy + 10); ctx.closePath(); ctx.stroke(); ctx.restore();
+    ctx.save(); ctx.globalAlpha = .38; ctx.fillStyle = '#020306'; ctx.beginPath(); ctx.ellipse(psx, psy + 12, 13, 4, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
     ctx.save(); ctx.translate(psx, psy + bob); if (faceLeft) ctx.scale(-1,1);
     ctx.drawImage(hspr, -18, -20, 36, 36);
     ctx.restore(); ctx.shadowBlur = 0;
@@ -1517,10 +1557,22 @@ function draw() {
     ctx.globalAlpha=1;
   }
 
-  // vignette
-  const grad=ctx.createRadialGradient(VIEW_TILES_X*TILE/2,VIEW_TILES_Y*TILE/2,120,VIEW_TILES_X*TILE/2,VIEW_TILES_Y*TILE/2,420);
-  grad.addColorStop(0,'rgba(0,0,0,0)'); grad.addColorStop(1,'rgba(0,0,0,.55)');
+  // Layered light: a faint character-colored bloom, then deep indigo fog.
+  // Both are post-process passes, so combat silhouettes remain crisp.
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  const bloom = ctx.createRadialGradient(psx, psy, 12, psx, psy, 155);
+  bloom.addColorStop(0, 'rgba(116,243,207,.055)');
+  bloom.addColorStop(.5, 'rgba(73,116,126,.025)');
+  bloom.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = bloom; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.restore();
+  const grad=ctx.createRadialGradient(psx,psy,105,psx,psy,430);
+  grad.addColorStop(0,'rgba(2,4,8,0)'); grad.addColorStop(.55,'rgba(3,5,10,.12)'); grad.addColorStop(1,'rgba(2,3,8,.72)');
   ctx.fillStyle=grad; ctx.fillRect(0,0,VIEW_TILES_X*TILE,VIEW_TILES_Y*TILE);
+  const edgeFog = ctx.createLinearGradient(0,0,0,cv.height);
+  edgeFog.addColorStop(0,'rgba(12,9,22,.18)'); edgeFog.addColorStop(.28,'rgba(0,0,0,0)'); edgeFog.addColorStop(1,'rgba(1,3,7,.2)');
+  ctx.fillStyle=edgeFog; ctx.fillRect(0,0,cv.width,cv.height);
 }
 
 function drawEffect(e, camX, camY) {
@@ -1540,8 +1592,8 @@ function updateHUD() {
   document.getElementById('hpBar').style.width = Math.max(0, p.hp / p.maxHp * 100) + '%';
   document.getElementById('lvlText').textContent = `LVL ${p.level}`;
   document.getElementById('xpBar').style.width = (p.xp / p.xpNext * 100) + '%';
-  document.getElementById('goldStat').textContent = `◈ ${G.gold}`;
-  document.getElementById('floorTag').textContent = `FLOOR ${G.floor}`;
+  document.getElementById('goldStat').textContent = `◈ ${G.gold} SHARDS`;
+  document.getElementById('floorTag').textContent = `FLOOR ${String(G.floor).padStart(2, '0')}`;
   // player status chips
   const sc = document.getElementById('statusChips');
   if (sc) {
@@ -1564,11 +1616,12 @@ function renderAbilityBar() {
     const s = document.createElement('div');
     s.className = 'slot';
     s.style.borderColor = ab.color;
+    s.style.setProperty('--slot-color', ab.color);
     s.innerHTML = `<span class="k">${keyLabels[i]||''}</span><span class="nm">${ab.shapeName}</span><span class="cdfill" id="cd${i}" style="transform:scaleY(0)"></span>`;
     bar.appendChild(s);
   });
   if (p.abilities.length === 0) {
-    const s = document.createElement('div'); s.className='slot'; s.innerHTML='<span class="k">J</span><span class="nm">Strike</span>'; bar.appendChild(s);
+    const s = document.createElement('div'); s.className='slot'; s.style.setProperty('--slot-color', '#6fe3c4'); s.innerHTML='<span class="k">J</span><span class="nm">Strike</span>'; bar.appendChild(s);
   }
 }
 
