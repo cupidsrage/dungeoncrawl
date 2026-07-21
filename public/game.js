@@ -75,41 +75,41 @@ function mobMotionFor(m, now, phase) {
 
   if (!m.moving) {
     const breath = Math.sin(now / 360 + phase);
-    motion.y = m.key === 'shade' ? breath * .55 : breath * .14;
-    motion.rotation = m.key === 'shade' ? Math.sin(now / 520 + phase) * .012 : 0;
-    motion.scaleX = 1 + breath * .004;
-    motion.scaleY = 1 - breath * .004;
+    motion.y = m.key === 'shade' ? breath * .9 : breath * .4;
+    motion.rotation = m.key === 'shade' ? Math.sin(now / 520 + phase) * .02 : breath * .008;
+    motion.scaleX = 1 + breath * .012;
+    motion.scaleY = 1 - breath * .012;
     return motion;
   }
 
   switch (m.key) {
     case 'grub':
-      motion.x = step * .35; motion.y = -lift * .2; motion.rotation = step * .018;
-      motion.scaleX = 1 + step * .026; motion.scaleY = 1 - step * .022;
+      motion.x = step * .9; motion.y = -lift * .8; motion.rotation = step * .045;
+      motion.scaleX = 1 + step * .055; motion.scaleY = 1 - step * .05;
       break;
     case 'skitter':
-      motion.x = step * .7; motion.y = -lift * .22; motion.rotation = step * .025;
-      motion.scaleX = 1 + lift * .03; motion.scaleY = 1 - lift * .025;
+      motion.x = step * 1.6; motion.y = -lift * .7; motion.rotation = step * .06;
+      motion.scaleX = 1 + lift * .075; motion.scaleY = 1 - lift * .06;
       break;
     case 'brute':
-      motion.x = step * .4; motion.y = -lift * .38; motion.rotation = step * .022;
-      motion.scaleX = 1 - step * .012; motion.scaleY = 1 + lift * .012;
+      motion.x = step; motion.y = -lift * 1.25; motion.rotation = step * .045;
+      motion.scaleX = 1 - step * .03; motion.scaleY = 1 + lift * .035;
       break;
     case 'shade':
-      motion.x = step * .42; motion.y = Math.sin(now / 180 + phase) * .7;
-      motion.rotation = step * .018; motion.scaleX = 1 + step * .012; motion.scaleY = 1 - step * .012;
+      motion.x = step * 1.1; motion.y = Math.sin(now / 180 + phase) * 1.5;
+      motion.rotation = step * .05; motion.scaleX = 1 + step * .03; motion.scaleY = 1 - step * .03;
       break;
     case 'spitter':
-      motion.x = step * .42; motion.y = -lift * .25; motion.rotation = step * .028;
-      motion.scaleX = 1 + step * .018; motion.scaleY = 1 - step * .018;
+      motion.x = step * 1.2; motion.y = -lift * .9; motion.rotation = step * .06;
+      motion.scaleX = 1 + step * .045; motion.scaleY = 1 - step * .04;
       break;
     case 'warden':
-      motion.x = step * .3; motion.y = -lift * .3; motion.rotation = step * .016;
-      motion.scaleY = 1 + lift * .008;
+      motion.x = step * .8; motion.y = -lift * 1.1; motion.rotation = step * .04;
+      motion.scaleX = 1 - step * .018; motion.scaleY = 1 + lift * .025;
       break;
     default:
-      motion.x = step * .25; motion.y = -lift * .25; motion.rotation = step * .01;
-      motion.scaleY = 1 + lift * .006;
+      motion.x = step * .6; motion.y = -lift * .9; motion.rotation = step * .022;
+      motion.scaleX = 1 + lift * .015; motion.scaleY = 1 + lift * .018;
   }
   return motion;
 }
@@ -1671,8 +1671,8 @@ function draw() {
     const walkStep = Math.sin(walkPhase);
     const walkLift = Math.abs(Math.cos(walkPhase));
     const heroMotion = p.moving
-      ? { x:walkStep * .38, y:-walkLift * .45, rotation:walkStep * .018, scaleX:1 + walkStep * .012, scaleY:1 - walkLift * .012, alpha:1 }
-      : { x:0, y:Math.sin(now / 280) * .2, rotation:Math.sin(now / 560) * .004, scaleX:1, scaleY:1, alpha:1 };
+      ? { x:walkStep * 1.15, y:-walkLift * 1.3, rotation:walkStep * .045, scaleX:1 + walkStep * .028, scaleY:1 - walkLift * .035, alpha:1 }
+      : { x:0, y:Math.sin(now / 280) * .45, rotation:Math.sin(now / 560) * .008, scaleX:1 + Math.sin(now / 360) * .01, scaleY:1 - Math.sin(now / 360) * .01, alpha:1 };
     ctx.shadowColor = p.dashT>0 ? '#6fe3c4' : '#ff5d6c';
     ctx.shadowBlur = p.dashT>0 ? 14 : (hasStatus(p,'rage') ? 4 : 0);
     const faceLeft = p.dir.x < -0.1;
