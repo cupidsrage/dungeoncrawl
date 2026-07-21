@@ -4,6 +4,10 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <title>SEEDSPIRE</title>
+<link rel="preload" as="image" href="assets/hd/seedspire-key-art.png" />
+<link rel="preload" as="image" href="assets/hd/character-atlas.png" />
+<link rel="preload" as="image" href="assets/hd/environment-atlas.png" />
+<link rel="preload" as="image" href="assets/hd/icon-atlas.png" />
 <style>
   :root{
     --bg:#0b0d14; --panel:#12151f; --panel2:#171b28; --ink:#e7e3d4; --dim:#8a8ba0;
@@ -152,7 +156,7 @@
   #game::after{content:"SEEDBOUND  //  LIVE DESCENT";position:absolute;z-index:5;left:24px;top:74px;pointer-events:none;
     color:rgba(116,243,207,.22);font-size:8px;letter-spacing:.24em;writing-mode:vertical-rl}
   canvas{width:min(100vw,150vh);height:min(100vh,66.6667vw);max-width:none;max-height:none;object-fit:contain;
-    filter:saturate(1.12) contrast(1.06);box-shadow:0 0 100px rgba(0,0,0,.8)}
+    image-rendering:auto;filter:saturate(1.12) contrast(1.06);box-shadow:0 0 100px rgba(0,0,0,.8)}
 
   #hud{z-index:8;padding:18px 22px;gap:9px;background:linear-gradient(180deg,rgba(3,5,9,.68),transparent);}
   .stat,.floorTag{position:relative;background:linear-gradient(180deg,rgba(17,23,32,.92),rgba(8,11,17,.88));
@@ -173,15 +177,23 @@
     border-radius:5px;box-shadow:0 18px 40px rgba(0,0,0,.42)}
   .slot{width:68px;height:68px;border-radius:3px;background:linear-gradient(145deg,rgba(24,31,43,.96),rgba(8,11,17,.96));
     border-color:var(--slot-color,var(--line))!important;box-shadow:inset 0 0 18px rgba(0,0,0,.32)}
-  .slot::before{content:"✦";font-size:16px;color:var(--slot-color,var(--accent));opacity:.78;text-shadow:0 0 12px currentColor;margin-bottom:4px}
+  .slot::before{content:"âœ¦";font-size:16px;color:var(--slot-color,var(--accent));opacity:.78;text-shadow:0 0 12px currentColor;margin-bottom:4px}
   .slot .k{top:4px;left:5px;padding:2px 4px;background:#05070b;border:1px solid rgba(255,255,255,.08);font-size:7px;letter-spacing:.06em;z-index:2}
   .slot .nm{font-size:8px;text-transform:uppercase;letter-spacing:.07em;z-index:2}
   .slot .cdfill{z-index:1;background:linear-gradient(0deg,rgba(2,3,6,.86),rgba(9,12,18,.66));backdrop-filter:grayscale(1)}
+  .slot::before{display:none}
+  .ability-art{position:absolute;inset:4px;background-image:url('assets/hd/icon-atlas.png');background-size:600% 300%;
+    background-repeat:no-repeat;border-radius:2px;filter:saturate(.92) contrast(1.08);z-index:0}
+  .slot::after{content:"";position:absolute;inset:4px;z-index:1;pointer-events:none;
+    background:linear-gradient(180deg,transparent 44%,rgba(2,4,7,.93));border:1px solid rgba(255,255,255,.06)}
+  .slot .k{z-index:3}
+  .slot .nm{font-size:7px;z-index:3;position:absolute;left:3px;right:3px;bottom:5px;text-shadow:0 1px 3px #000,0 0 5px #000}
+  .slot .cdfill{z-index:2}
   #log{z-index:8;left:24px;bottom:33px;width:300px;padding-left:12px;border-left:1px solid rgba(116,243,207,.2);line-height:1.55}
   #hint{z-index:8;right:24px;bottom:23px;padding:9px 11px;background:rgba(5,8,13,.64);border-right:1px solid rgba(116,243,207,.2);
     color:#737e90;font-size:9px;letter-spacing:.02em}
 
-  #menu{overflow:auto;align-items:stretch;padding:clamp(18px,4vh,44px);background:
+  #menu{overflow:auto;align-items:stretch;padding:clamp(18px,4vh,44px);isolation:isolate;background:
     radial-gradient(circle at 18% 20%,rgba(66,152,139,.11),transparent 29%),
     radial-gradient(circle at 79% 76%,rgba(126,77,178,.12),transparent 32%),
     linear-gradient(135deg,#080c12 0%,#05070b 58%,#090711 100%)}
@@ -190,6 +202,10 @@
     radial-gradient(circle at 82% 22%,rgba(169,122,255,.3) 0 1px,transparent 1.5px),
     radial-gradient(circle at 71% 80%,rgba(243,201,105,.22) 0 1px,transparent 1.5px);
     background-size:127px 131px,173px 181px,211px 197px;animation:drift 28s linear infinite}
+  #menu::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+    background:url('assets/hd/seedspire-key-art.png') center/cover no-repeat;opacity:.34;filter:saturate(.78) contrast(1.14);
+    -webkit-mask-image:linear-gradient(90deg,#000 0%,rgba(0,0,0,.72) 55%,transparent 88%);
+    mask-image:linear-gradient(90deg,#000 0%,rgba(0,0,0,.72) 55%,transparent 88%)}
   .menu-shell{position:relative;z-index:1;width:min(1050px,96vw);margin:auto;display:grid;grid-template-columns:minmax(0,1.15fr) minmax(380px,.85fr);
     align-items:center;gap:clamp(34px,6vw,86px)}
   .menu-lore{position:relative;padding:34px 0}
@@ -200,7 +216,7 @@
   .spire-mark{position:relative;flex:0 0 78px;height:106px;filter:drop-shadow(0 0 18px rgba(116,243,207,.15))}
   .spire-mark::before{content:"";position:absolute;left:35px;top:3px;width:8px;height:88px;
     background:linear-gradient(180deg,var(--accent),#477c7f 48%,var(--accent2));clip-path:polygon(50% 0,100% 15%,72% 82%,100% 100%,0 100%,28% 82%,0 15%)}
-  .spire-mark::after{content:"✦";position:absolute;left:20px;top:26px;width:38px;height:38px;border:1px solid rgba(116,243,207,.42);
+  .spire-mark::after{content:"âœ¦";position:absolute;left:20px;top:26px;width:38px;height:38px;border:1px solid rgba(116,243,207,.42);
     border-radius:50%;display:grid;place-items:center;color:var(--accent);background:#080d13;box-shadow:0 0 0 6px rgba(116,243,207,.025),0 0 26px rgba(116,243,207,.16)}
   .brand{font-size:clamp(44px,6vw,76px);letter-spacing:.16em;line-height:.88;margin:0;
     text-shadow:0 0 36px rgba(111,227,196,.09)}
@@ -236,11 +252,20 @@
   #inv{background:rgba(3,5,9,.94);backdrop-filter:blur(10px)}
   .box,.modalcard{border-radius:4px;background:linear-gradient(145deg,rgba(17,23,32,.98),rgba(8,11,17,.98));border-color:rgba(151,175,187,.2)}
   .equip-slot,.itemcard,.upcard{border-radius:3px;background:#131b26}
+  .equip-art{display:block;flex:0 0 40px;width:40px;aspect-ratio:1;background-image:url('assets/hd/icon-atlas.png');background-size:600% 300%;
+    background-repeat:no-repeat;border:1px solid rgba(151,175,187,.18);box-shadow:inset 0 0 10px rgba(0,0,0,.42);filter:saturate(.92) contrast(1.08)}
+  .equip-art.empty{opacity:.22;filter:grayscale(1)}
+  .item-layout{display:grid;grid-template-columns:58px minmax(0,1fr);gap:10px;align-items:start}
+  .item-art{display:block;width:58px;aspect-ratio:1;background-image:url('assets/hd/icon-atlas.png');background-size:600% 300%;
+    background-repeat:no-repeat;border:1px solid rgba(151,175,187,.22);box-shadow:inset 0 0 14px rgba(0,0,0,.4),0 5px 13px rgba(0,0,0,.28);
+    filter:saturate(.94) contrast(1.08)}
+  .item-copy{min-width:0}
   #tooltip{border-radius:3px;background:#070a0f;border-color:rgba(151,175,187,.23)}
 
   @media (max-width:860px){
     #menu{padding:20px;align-items:flex-start}
     .menu-shell{grid-template-columns:1fr;gap:12px;width:min(560px,96vw)}
+    .invwrap{grid-template-columns:1fr}.itemgrid{max-height:none}
     .menu-lore{padding:18px 0 8px}.menu-lore::before{display:none}
     .brand-lockup{margin:12px 0}.spire-mark{transform:scale(.78);transform-origin:left center;margin-right:-9px}
     .brand{font-size:clamp(39px,12vw,62px)}.lore-line{margin:12px 0 16px;line-height:1.55}
@@ -252,6 +277,7 @@
     .control-deck{display:none}#menu .card{padding:20px 17px}.panel-head{margin-bottom:9px}
     #hud{padding:8px;gap:5px}.stat{padding:6px;font-size:9px}.bar{width:82px}.floorTag{padding:8px 8px 7px 20px}
     #goldStat{display:none}#audioToggle{margin-left:auto}#game::after{display:none}
+    .item-layout{grid-template-columns:44px minmax(0,1fr)}.item-art{width:44px}.equip-art{flex-basis:34px;width:34px}
   }
   @media (max-width:560px) and (orientation:portrait){
     /* Portrait play uses a centered crop of the 3:2 game camera. The hero stays
@@ -277,14 +303,14 @@
         <div id="lvlText">LVL 1</div>
         <div class="bar xp"><i id="xpBar" style="width:0%"></i></div>
       </div>
-      <div class="stat" id="goldStat">◈ 0</div>
-      <button class="stat" id="audioToggle" type="button">🔊 AUDIO</button>
+      <div class="stat" id="goldStat">â—ˆ 0</div>
+      <button class="stat" id="audioToggle" type="button">ðŸ”Š AUDIO</button>
       <div class="floorTag" id="floorTag">FLOOR 1</div>
     </div>
     <div id="statusChips"></div>
     <div id="abilities"></div>
     <div id="log"></div>
-    <div id="hint">WASD / arrows — move<br>Left click / J — attack 1 · Right click / L — attack 2<br>K — dash · I — inventory · M — mute<br>step on ▼ to descend</div>
+    <div id="hint">WASD / arrows â€” move<br>Left click / J â€” attack 1 Â· Right click / L â€” attack 2<br>K â€” dash Â· I â€” inventory Â· M â€” mute<br>step on â–¼ to descend</div>
     <div id="touch">
       <div id="stick"><div id="nub"></div></div>
       <div id="fire">ATTACK</div>
@@ -295,8 +321,8 @@
     <div class="closebar">
       <h2>INVENTORY</h2>
       <div style="display:flex;gap:8px">
-        <span class="pill" id="sellJunk">Salvage junk ✦</span>
-        <span class="pill" id="closeInv">Close ✕ (I)</span>
+        <span class="pill" id="sellJunk">Salvage junk âœ¦</span>
+        <span class="pill" id="closeInv">Close âœ• (I)</span>
       </div>
     </div>
     <div id="runEssence" style="max-width:900px;margin:0 auto 12px;font-size:12px;color:var(--dim)"></div>
@@ -308,7 +334,7 @@
         <div id="charStats" style="font-size:12px;line-height:1.9;color:var(--dim)"></div>
       </div>
       <div class="box">
-        <h3>Backpack (<span id="bagCount">0</span>) <span style="font-size:10px;color:var(--dim);font-weight:400">— destroy items for essence</span></h3>
+        <h3>Backpack (<span id="bagCount">0</span>) <span style="font-size:10px;color:var(--dim);font-weight:400">â€” destroy items for essence</span></h3>
         <div class="itemgrid" id="bag"></div>
       </div>
     </div>
@@ -330,7 +356,7 @@
       <div class="feature-strip">
         <div class="feature"><b>Living dungeons</b><span>Deterministic floors that twist around every seed.</span></div>
         <div class="feature"><b>Weapon-born skills</b><span>Every blade rewrites the way you fight.</span></div>
-        <div class="feature"><b>Risk the descent</b><span>Extract safely—or carry your essence deeper.</span></div>
+        <div class="feature"><b>Risk the descent</b><span>Extract safelyâ€”or carry your essence deeper.</span></div>
       </div>
       <div class="control-deck" aria-label="Game controls">
         <span><b>WASD</b> MOVE</span><span><b>J / LMB</b> STRIKE</span><span><b>K</b> DASH</span><span><b>I</b> GEAR</span>
@@ -353,7 +379,7 @@
       <input id="authPass" type="password" placeholder="Password" autocomplete="off" />
       <div id="authError" style="color:var(--danger);font-size:11px;min-height:14px;margin-top:6px"></div>
       <button class="btn" id="authBtn">LOG IN</button>
-      <div class="guest-note">Bank essence between runs—or descend as a guest below.</div>
+      <div class="guest-note">Bank essence between runsâ€”or descend as a guest below.</div>
     </div>
 
     <!-- Account: logged in -->
@@ -363,7 +389,7 @@
         <span class="pill" id="logoutBtn">Log out</span>
       </div>
       <div id="vault" style="margin-top:10px;font-size:12px;color:var(--dim)"></div>
-      <button class="btn ghost" id="hubBtn" style="margin-top:10px">⚡ VAULT OF POWER — spend essence</button>
+      <button class="btn ghost" id="hubBtn" style="margin-top:10px">âš¡ VAULT OF POWER â€” spend essence</button>
     </div>
 
     <label for="seedInput" style="margin-top:16px">Seed <span style="text-transform:none;color:var(--dim)">(blank = random)</span></label>
@@ -388,10 +414,10 @@
     <div id="extractFloor" class="modaltag">CHECKPOINT</div>
     <h2 style="margin:6px 0 10px;letter-spacing:.08em">LEAVE OR DESCEND?</h2>
     <div id="extractBreakdown" style="font-size:13px;color:var(--ink);line-height:1.5;margin-bottom:6px"></div>
-    <div style="font-size:12px;color:var(--dim);margin-bottom:16px">Leave now and keep <b style="color:var(--accent)">100%</b> of your essence. Descend deeper and it stays at risk — die and you keep only <b style="color:var(--danger)">30%</b>.</div>
+    <div style="font-size:12px;color:var(--dim);margin-bottom:16px">Leave now and keep <b style="color:var(--accent)">100%</b> of your essence. Descend deeper and it stays at risk â€” die and you keep only <b style="color:var(--danger)">30%</b>.</div>
     <div class="row">
       <button class="btn" id="extractLeaveBtn" style="background:linear-gradient(90deg,var(--accent),#4fb8ff)">LEAVE (100%)</button>
-      <button class="btn ghost" id="extractContinueBtn">DESCEND ▼</button>
+      <button class="btn ghost" id="extractContinueBtn">DESCEND â–¼</button>
     </div>
   </div>
 </div>
@@ -405,12 +431,12 @@
   </div>
 </div>
 
-<!-- Vault of Power — upgrade hub -->
+<!-- Vault of Power â€” upgrade hub -->
 <div id="hubModal" class="modal">
   <div class="modalcard" style="width:min(680px,94vw);max-height:90vh;overflow:auto;text-align:left">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-      <h2 style="margin:0;letter-spacing:.1em">⚡ VAULT OF POWER</h2>
-      <span class="pill" id="hubClose">Close ✕</span>
+      <h2 style="margin:0;letter-spacing:.1em">âš¡ VAULT OF POWER</h2>
+      <span class="pill" id="hubClose">Close âœ•</span>
     </div>
     <div id="hubEssence" style="font-size:12px;color:var(--dim);margin-bottom:14px"></div>
     <div id="hubTabs" style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap"></div>
@@ -419,6 +445,7 @@
 </div>
 
 <div id="tooltip"></div>
-<script type="module" src="game.js?v=7"></script>
+<script type="module" src="game.js?v=8"></script>
 </body>
 </html>
+
