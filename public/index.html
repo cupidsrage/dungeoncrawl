@@ -7,6 +7,8 @@
 <link rel="preload" as="image" href="assets/hd/seedspire-key-art.png" />
 <link rel="preload" as="image" href="assets/hd/character-atlas.png" />
 <link rel="preload" as="image" href="assets/hd/hero-walk-atlas.png" />
+<link rel="preload" as="image" href="assets/hd/mob-walk-atlas.png" />
+<link rel="preload" as="image" href="assets/hd/elite-walk-atlas.png" />
 <link rel="preload" as="image" href="assets/hd/environment-atlas.png" />
 <link rel="preload" as="image" href="assets/hd/icon-atlas.png" />
 <style>
@@ -178,7 +180,7 @@
     border-radius:5px;box-shadow:0 18px 40px rgba(0,0,0,.42)}
   .slot{width:68px;height:68px;border-radius:3px;background:linear-gradient(145deg,rgba(24,31,43,.96),rgba(8,11,17,.96));
     border-color:var(--slot-color,var(--line))!important;box-shadow:inset 0 0 18px rgba(0,0,0,.32)}
-  .slot::before{content:"âœ¦";font-size:16px;color:var(--slot-color,var(--accent));opacity:.78;text-shadow:0 0 12px currentColor;margin-bottom:4px}
+  .slot::before{content:"✦";font-size:16px;color:var(--slot-color,var(--accent));opacity:.78;text-shadow:0 0 12px currentColor;margin-bottom:4px}
   .slot .k{top:4px;left:5px;padding:2px 4px;background:#05070b;border:1px solid rgba(255,255,255,.08);font-size:7px;letter-spacing:.06em;z-index:2}
   .slot .nm{font-size:8px;text-transform:uppercase;letter-spacing:.07em;z-index:2}
   .slot .cdfill{z-index:1;background:linear-gradient(0deg,rgba(2,3,6,.86),rgba(9,12,18,.66));backdrop-filter:grayscale(1)}
@@ -217,7 +219,7 @@
   .spire-mark{position:relative;flex:0 0 78px;height:106px;filter:drop-shadow(0 0 18px rgba(116,243,207,.15))}
   .spire-mark::before{content:"";position:absolute;left:35px;top:3px;width:8px;height:88px;
     background:linear-gradient(180deg,var(--accent),#477c7f 48%,var(--accent2));clip-path:polygon(50% 0,100% 15%,72% 82%,100% 100%,0 100%,28% 82%,0 15%)}
-  .spire-mark::after{content:"âœ¦";position:absolute;left:20px;top:26px;width:38px;height:38px;border:1px solid rgba(116,243,207,.42);
+  .spire-mark::after{content:"✦";position:absolute;left:20px;top:26px;width:38px;height:38px;border:1px solid rgba(116,243,207,.42);
     border-radius:50%;display:grid;place-items:center;color:var(--accent);background:#080d13;box-shadow:0 0 0 6px rgba(116,243,207,.025),0 0 26px rgba(116,243,207,.16)}
   .brand{font-size:clamp(44px,6vw,76px);letter-spacing:.16em;line-height:.88;margin:0;
     text-shadow:0 0 36px rgba(111,227,196,.09)}
@@ -304,14 +306,14 @@
         <div id="lvlText">LVL 1</div>
         <div class="bar xp"><i id="xpBar" style="width:0%"></i></div>
       </div>
-      <div class="stat" id="goldStat">â—ˆ 0</div>
-      <button class="stat" id="audioToggle" type="button">ðŸ”Š AUDIO</button>
+      <div class="stat" id="goldStat">◈ 0</div>
+      <button class="stat" id="audioToggle" type="button">🔊 AUDIO</button>
       <div class="floorTag" id="floorTag">FLOOR 1</div>
     </div>
     <div id="statusChips"></div>
     <div id="abilities"></div>
     <div id="log"></div>
-    <div id="hint">WASD / arrows â€” move<br>Left click / J â€” attack 1 Â· Right click / L â€” attack 2<br>K â€” dash Â· I â€” inventory Â· M â€” mute<br>step on â–¼ to descend</div>
+    <div id="hint">WASD / arrows — move<br>Left click / J — attack 1 · Right click / L — attack 2<br>K — dash · I — inventory · M — mute<br>step on ▼ to descend</div>
     <div id="touch">
       <div id="stick"><div id="nub"></div></div>
       <div id="fire">ATTACK</div>
@@ -322,8 +324,8 @@
     <div class="closebar">
       <h2>INVENTORY</h2>
       <div style="display:flex;gap:8px">
-        <span class="pill" id="sellJunk">Salvage junk âœ¦</span>
-        <span class="pill" id="closeInv">Close âœ• (I)</span>
+        <span class="pill" id="sellJunk">Salvage junk ✦</span>
+        <span class="pill" id="closeInv">Close ✕ (I)</span>
       </div>
     </div>
     <div id="runEssence" style="max-width:900px;margin:0 auto 12px;font-size:12px;color:var(--dim)"></div>
@@ -335,7 +337,7 @@
         <div id="charStats" style="font-size:12px;line-height:1.9;color:var(--dim)"></div>
       </div>
       <div class="box">
-        <h3>Backpack (<span id="bagCount">0</span>) <span style="font-size:10px;color:var(--dim);font-weight:400">â€” destroy items for essence</span></h3>
+        <h3>Backpack (<span id="bagCount">0</span>) <span style="font-size:10px;color:var(--dim);font-weight:400">— destroy items for essence</span></h3>
         <div class="itemgrid" id="bag"></div>
       </div>
     </div>
@@ -357,7 +359,7 @@
       <div class="feature-strip">
         <div class="feature"><b>Living dungeons</b><span>Deterministic floors that twist around every seed.</span></div>
         <div class="feature"><b>Weapon-born skills</b><span>Every blade rewrites the way you fight.</span></div>
-        <div class="feature"><b>Risk the descent</b><span>Extract safelyâ€”or carry your essence deeper.</span></div>
+        <div class="feature"><b>Risk the descent</b><span>Extract safely—or carry your essence deeper.</span></div>
       </div>
       <div class="control-deck" aria-label="Game controls">
         <span><b>WASD</b> MOVE</span><span><b>J / LMB</b> STRIKE</span><span><b>K</b> DASH</span><span><b>I</b> GEAR</span>
@@ -380,7 +382,7 @@
       <input id="authPass" type="password" placeholder="Password" autocomplete="off" />
       <div id="authError" style="color:var(--danger);font-size:11px;min-height:14px;margin-top:6px"></div>
       <button class="btn" id="authBtn">LOG IN</button>
-      <div class="guest-note">Bank essence between runsâ€”or descend as a guest below.</div>
+      <div class="guest-note">Bank essence between runs—or descend as a guest below.</div>
     </div>
 
     <!-- Account: logged in -->
@@ -390,7 +392,7 @@
         <span class="pill" id="logoutBtn">Log out</span>
       </div>
       <div id="vault" style="margin-top:10px;font-size:12px;color:var(--dim)"></div>
-      <button class="btn ghost" id="hubBtn" style="margin-top:10px">âš¡ VAULT OF POWER â€” spend essence</button>
+      <button class="btn ghost" id="hubBtn" style="margin-top:10px">⚡ VAULT OF POWER — spend essence</button>
     </div>
 
     <label for="seedInput" style="margin-top:16px">Seed <span style="text-transform:none;color:var(--dim)">(blank = random)</span></label>
@@ -415,10 +417,10 @@
     <div id="extractFloor" class="modaltag">CHECKPOINT</div>
     <h2 style="margin:6px 0 10px;letter-spacing:.08em">LEAVE OR DESCEND?</h2>
     <div id="extractBreakdown" style="font-size:13px;color:var(--ink);line-height:1.5;margin-bottom:6px"></div>
-    <div style="font-size:12px;color:var(--dim);margin-bottom:16px">Leave now and keep <b style="color:var(--accent)">100%</b> of your essence. Descend deeper and it stays at risk â€” die and you keep only <b style="color:var(--danger)">30%</b>.</div>
+    <div style="font-size:12px;color:var(--dim);margin-bottom:16px">Leave now and keep <b style="color:var(--accent)">100%</b> of your essence. Descend deeper and it stays at risk — die and you keep only <b style="color:var(--danger)">30%</b>.</div>
     <div class="row">
       <button class="btn" id="extractLeaveBtn" style="background:linear-gradient(90deg,var(--accent),#4fb8ff)">LEAVE (100%)</button>
-      <button class="btn ghost" id="extractContinueBtn">DESCEND â–¼</button>
+      <button class="btn ghost" id="extractContinueBtn">DESCEND ▼</button>
     </div>
   </div>
 </div>
@@ -432,12 +434,12 @@
   </div>
 </div>
 
-<!-- Vault of Power â€” upgrade hub -->
+<!-- Vault of Power — upgrade hub -->
 <div id="hubModal" class="modal">
   <div class="modalcard" style="width:min(680px,94vw);max-height:90vh;overflow:auto;text-align:left">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-      <h2 style="margin:0;letter-spacing:.1em">âš¡ VAULT OF POWER</h2>
-      <span class="pill" id="hubClose">Close âœ•</span>
+      <h2 style="margin:0;letter-spacing:.1em">⚡ VAULT OF POWER</h2>
+      <span class="pill" id="hubClose">Close ✕</span>
     </div>
     <div id="hubEssence" style="font-size:12px;color:var(--dim);margin-bottom:14px"></div>
     <div id="hubTabs" style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap"></div>
@@ -446,7 +448,6 @@
 </div>
 
 <div id="tooltip"></div>
-<script type="module" src="game.js?v=9"></script>
+<script type="module" src="game.js?v=10"></script>
 </body>
 </html>
-
