@@ -121,12 +121,24 @@ export function generateDungeon(seed, floor) {
 //  caster  - holds range and fires projectiles; retreats if you close in
 //  bomber  - advances while lobbing slow arcing shots, dangerous at mid-range
 const MONSTER_ARCHETYPES = [
-  { key: 'grub', name: 'Cave Grub', glyph: 'g', hpMul: 0.8, dmgMul: 0.7, spd: 0.95, color: '#8fae6b', behavior: 'chaser' },
-  { key: 'skitter', name: 'Skitterling', glyph: 's', hpMul: 0.55, dmgMul: 0.9, spd: 1.55, color: '#c9a24b', behavior: 'charger' },
-  { key: 'brute', name: 'Stone Brute', glyph: 'B', hpMul: 2.0, dmgMul: 1.5, spd: 0.7, color: '#9a8f80', behavior: 'chaser', special: 'slam', proj: 'cold' },
-  { key: 'shade', name: 'Hollow Shade', glyph: 'h', hpMul: 1.1, dmgMul: 1.0, spd: 1.15, color: '#7d6bad', behavior: 'caster', proj: 'void' },
-  { key: 'spitter', name: 'Blight Spitter', glyph: 'y', hpMul: 1.15, dmgMul: 1.0, spd: 0.9, color: '#7bbf5a', behavior: 'bomber', proj: 'poison' },
-  { key: 'warden', name: 'Rift Warden', glyph: 'W', hpMul: 1.6, dmgMul: 1.2, spd: 1.05, color: '#c0596b', behavior: 'caster', proj: 'fire', special: 'volley' },
+  { key: 'grub', name: 'Cave Grub', glyph: 'g', hpMul: 0.8, dmgMul: 0.7, spd: 0.95, color: '#8fae6b', behavior: 'chaser', floorMin: 1 },
+  { key: 'skitter', name: 'Skitterling', glyph: 's', hpMul: 0.55, dmgMul: 0.9, spd: 1.55, color: '#c9a24b', behavior: 'charger', floorMin: 1 },
+  { key: 'brute', name: 'Stone Brute', glyph: 'B', hpMul: 2.0, dmgMul: 1.5, spd: 0.7, color: '#9a8f80', behavior: 'chaser', special: 'slam', proj: 'cold', floorMin: 1 },
+  { key: 'shade', name: 'Hollow Shade', glyph: 'h', hpMul: 1.1, dmgMul: 1.0, spd: 1.15, color: '#7d6bad', behavior: 'caster', proj: 'void', floorMin: 1 },
+  { key: 'spitter', name: 'Blight Spitter', glyph: 'y', hpMul: 1.15, dmgMul: 1.0, spd: 0.9, color: '#7bbf5a', behavior: 'bomber', proj: 'poison', floorMin: 2 },
+  { key: 'leech', name: 'Blood Leech', glyph: 'L', hpMul: 0.95, dmgMul: 0.85, spd: 1.35, color: '#cf4d56', behavior: 'leech', floorMin: 2 },
+  { key: 'mimic', name: 'Vault Mimic', glyph: 'M', hpMul: 1.45, dmgMul: 1.35, spd: 1.2, color: '#e1a84c', behavior: 'ambusher', floorMin: 2, treasure: true },
+  { key: 'sentinel', name: 'Runic Sentinel', glyph: 'S', hpMul: 1.55, dmgMul: 1.15, spd: 0.85, color: '#55d7dc', behavior: 'sentinel', proj: 'lightning', floorMin: 3 },
+  { key: 'warden', name: 'Rift Warden', glyph: 'W', hpMul: 1.6, dmgMul: 1.2, spd: 1.05, color: '#c0596b', behavior: 'caster', proj: 'fire', special: 'volley', floorMin: 3 },
+  { key: 'cultist', name: 'Bone Cultist', glyph: 'C', hpMul: 1.25, dmgMul: 1.05, spd: 0.9, color: '#9c6ed0', behavior: 'summoner', proj: 'void', floorMin: 4 },
+];
+
+const ELITE_TRAITS = [
+  { key: 'juggernaut', name: 'Juggernaut', hp: 1.7, dmg: 1.2, spd: 0.82, color: '#e0a64b' },
+  { key: 'swift', name: 'Frenzied', hp: 1.15, dmg: 1.1, spd: 1.38, color: '#72e5c3' },
+  { key: 'vampiric', name: 'Vampiric', hp: 1.35, dmg: 1.12, spd: 1.05, color: '#e45068' },
+  { key: 'volatile', name: 'Volatile', hp: 1.2, dmg: 1.3, spd: 1.08, color: '#ff8b42' },
+  { key: 'shielded', name: 'Shielded', hp: 1.3, dmg: 1.05, spd: 0.95, color: '#67cbe8', shields: 2 },
 ];
 
 export function generateMonsters(seed, floor, rooms) {
@@ -137,10 +149,12 @@ export function generateMonsters(seed, floor, rooms) {
     const room = rooms[i];
     const count = rng.int(1, Math.min(4, 1 + Math.floor(floor / 2.5)));
     for (let c = 0; c < count; c++) {
-      // Wardens are rare; ranged types appear a bit more on deeper floors.
-      const arch = rng.weighted(MONSTER_ARCHETYPES.map((a) => ({
+      // Deeper floors unlock specialists, summoners, sentinels, and mimics.
+      const available = MONSTER_ARCHETYPES.filter((a) => floor >= (a.floorMin || 1));
+      const arch = rng.weighted(available.map((a) => ({
         ...a,
-        w: a.key === 'warden' ? 1
+        w: a.key === 'cultist' || a.key === 'mimic' ? 1.4
+          : a.key === 'warden' || a.key === 'sentinel' ? 2
           : (a.behavior === 'caster' || a.behavior === 'bomber') ? 3 + Math.min(3, floor * 0.2)
           : 4,
       })));
@@ -151,12 +165,26 @@ export function generateMonsters(seed, floor, rooms) {
       const dmg = Math.round((6 + level * 4.0) * arch.dmgMul);
       const x = room.x + rng.int(0, room.w - 1);
       const y = room.y + rng.int(0, room.h - 1);
-      mobs.push({
+      const mob = {
         id: `m${floor}_${i}_${c}`, key: arch.key, name: arch.name, glyph: arch.glyph,
         color: arch.color, x, y, hp: maxHp, maxHp, dmg, spd: arch.spd, level: Math.max(1, level),
         xp: Math.round(6 + level * 4 * arch.hpMul),
         behavior: arch.behavior, proj: arch.proj || null, special: arch.special || null,
-      });
+        treasure: !!arch.treasure, dormant: arch.behavior === 'ambusher',
+      };
+      if (floor >= 3 && rng.chance(Math.min(0.1 + floor * 0.012, 0.3))) {
+        const elite = rng.pick(ELITE_TRAITS);
+        mob.elite = elite.key;
+        mob.name = `${elite.name} ${mob.name}`;
+        mob.color = elite.color;
+        mob.maxHp = Math.round(mob.maxHp * elite.hp);
+        mob.hp = mob.maxHp;
+        mob.dmg = Math.round(mob.dmg * elite.dmg);
+        mob.spd *= elite.spd;
+        mob.xp = Math.round(mob.xp * 1.8);
+        mob.eliteShield = elite.shields || 0;
+      }
+      mobs.push(mob);
     }
   }
   // Guarantee a ranged presence: if a populated floor rolled all-melee, convert
@@ -208,16 +236,29 @@ const BASES = {
     { key: 'axe', name: 'Axe', dmg: [9, 15], spd: 0.8 },
     { key: 'staff', name: 'Staff', dmg: [5, 9], spd: 1.1 },
     { key: 'bow', name: 'Bow', dmg: [6, 10], spd: 1.2 },
+    { key: 'hammer', name: 'War Hammer', dmg: [11, 17], spd: 0.68 },
+    { key: 'spear', name: 'Spear', dmg: [7, 13], spd: 1.05 },
+    { key: 'scythe', name: 'Grave Scythe', dmg: [9, 16], spd: 0.78 },
+    { key: 'wand', name: 'Runic Wand', dmg: [5, 10], spd: 1.35 },
+    { key: 'crossbow', name: 'Crossbow', dmg: [10, 16], spd: 0.72 },
   ],
   armor: [
     { key: 'robe', name: 'Robe', armor: [2, 5] },
     { key: 'leather', name: 'Leather Cuirass', armor: [4, 8] },
     { key: 'plate', name: 'Plate Harness', armor: [8, 14] },
+    { key: 'chainmail', name: 'Chainmail', armor: [6, 11] },
+    { key: 'brigandine', name: 'Brigandine', armor: [7, 12] },
+    { key: 'mantle', name: 'Runic Mantle', armor: [3, 7] },
+    { key: 'boneguard', name: 'Boneguard Plate', armor: [9, 16] },
   ],
   trinket: [
     { key: 'ring', name: 'Ring' },
     { key: 'amulet', name: 'Amulet' },
     { key: 'charm', name: 'Charm' },
+    { key: 'sigil', name: 'Sigil' },
+    { key: 'tome', name: 'Forbidden Tome' },
+    { key: 'idol', name: 'Carved Idol' },
+    { key: 'lantern', name: 'Soul Lantern' },
   ],
 };
 
@@ -231,6 +272,13 @@ const PREFIXES = [
   { stat: 'fireDmg', name: 'Flaming', range: [3, 9] },
   { stat: 'coldDmg', name: 'Frostbitten', range: [3, 9] },
   { stat: 'lightningDmg', name: 'Storm', range: [2, 11] },
+  { stat: 'voidDmg', name: 'Abyssal', range: [3, 10] },
+  { stat: 'poisonDmg', name: 'Venomous', range: [3, 9] },
+  { stat: 'abilityPower', name: 'Runic', range: [0.06, 0.18] },
+  { stat: 'area', name: 'Cataclysmic', range: [0.08, 0.24] },
+  { stat: 'attackSpeed', name: 'Frenzied', range: [0.05, 0.16] },
+  { stat: 'thorns', name: 'Barbed', range: [2, 8] },
+  { stat: 'goldFind', name: 'Gilded', range: [0.08, 0.25] },
 ];
 const SUFFIXES = [
   { stat: 'lifesteal', name: 'of Leeching', range: [0.03, 0.09] },
@@ -240,19 +288,31 @@ const SUFFIXES = [
   { stat: 'regen', name: 'of Renewal', range: [0.5, 2.0] },
   { stat: 'maxHp', name: 'of the Bear', range: [10, 25] },
   { stat: 'cdr', name: 'of Alacrity', range: [0.05, 0.15] },
+  { stat: 'projectileSpeed', name: 'of Velocity', range: [0.08, 0.28] },
+  { stat: 'statusDur', name: 'of Torment', range: [0.08, 0.25] },
+  { stat: 'execute', name: 'of Execution', range: [0.03, 0.1] },
+  { stat: 'blockChance', name: 'of Deflection', range: [0.03, 0.1] },
+  { stat: 'pickupRadius', name: 'of Magnetism', range: [6, 24] },
+  { stat: 'luck', name: 'of Fortune', range: [0.05, 0.2] },
 ];
 
 const STAT_LABEL = {
   flatDmg: '+{v} Damage', fireDmg: '+{v} Fire Damage', coldDmg: '+{v} Cold Damage',
   lightningDmg: '+{v} Lightning Damage', critChance: '+{p}% Crit Chance', critDmg: '+{p}% Crit Damage',
+  voidDmg: '+{v} Void Damage', poisonDmg: '+{v} Poison Damage',
   armor: '+{v} Armor', maxHp: '+{v} Max HP', lifesteal: '{p}% Lifesteal', moveSpeed: '+{p}% Move Speed',
   dodge: '+{p}% Dodge', regen: '+{v} HP/sec Regen', cdr: '+{p}% Cooldown Reduction',
+  abilityPower: '+{p}% Ability Power', area: '+{p}% Ability Area', attackSpeed: '+{p}% Attack Speed',
+  thorns: '+{v} Thorns', goldFind: '+{p}% Gold Find', projectileSpeed: '+{p}% Projectile Speed',
+  statusDur: '+{p}% Status Duration', execute: '+{p}% Execute Threshold', blockChance: '+{p}% Block Chance',
+  pickupRadius: '+{v} Pickup Radius', luck: '+{p}% Loot Luck',
 };
 
 function fmtAffix(a) {
   const l = STAT_LABEL[a.stat] || `+{v} ${a.stat}`;
   const pct = /Chance|Damage %|Lifesteal|Speed|Dodge|Reduction|critDmg|critChance|cdr|lifesteal|moveSpeed|dodge/;
-  const asPct = ['critChance', 'critDmg', 'lifesteal', 'moveSpeed', 'dodge', 'cdr'].includes(a.stat);
+  const asPct = ['critChance', 'critDmg', 'lifesteal', 'moveSpeed', 'dodge', 'cdr', 'abilityPower', 'area',
+    'attackSpeed', 'goldFind', 'projectileSpeed', 'statusDur', 'execute', 'blockChance', 'luck'].includes(a.stat);
   return l.replace('{v}', a.value).replace('{p}', Math.round(a.value * 100));
 }
 
@@ -299,7 +359,8 @@ export function generateItem(seed, salt, floor, magicFind = 0) {
     const usePrefix = i % 2 === 0 ? pi < prefixPool.length : !(si < suffixPool.length);
     const src = usePrefix ? prefixPool[pi++] : suffixPool[si++];
     if (!src) continue;
-    const isPctStat = ['critChance', 'critDmg', 'lifesteal', 'moveSpeed', 'dodge', 'cdr', 'regen'].includes(src.stat);
+    const isPctStat = ['critChance', 'critDmg', 'lifesteal', 'moveSpeed', 'dodge', 'cdr', 'regen', 'abilityPower',
+      'area', 'attackSpeed', 'goldFind', 'projectileSpeed', 'statusDur', 'execute', 'blockChance', 'luck'].includes(src.stat);
     let value = rng.float(src.range[0], src.range[1]) * (isPctStat ? 1 : scale) * rarity.mul;
     value = isPctStat ? Math.round(value * 100) / 100 : Math.round(value);
     const affix = { stat: src.stat, name: src.name, isPrefix: usePrefix, value };
@@ -328,6 +389,11 @@ const ABILITY_SHAPES = [
   { key: 'lance', name: 'Lance', desc: 'a piercing line', w: 3, range: 6, cd: 1.4, pierce: true },
   { key: 'volley', name: 'Volley', desc: 'a spread of shots', w: 3, range: 7, cd: 1.8, multi: 3 },
   { key: 'chain', name: 'Chain', desc: 'a bolt that jumps between foes', w: 2, range: 6, cd: 1.6, chain: 3 },
+  { key: 'meteor', name: 'Meteor', desc: 'a delayed impact at the target point', w: 2.5, range: 8, cd: 2.8, aoe: true, powerMul: 1.55 },
+  { key: 'vortex', name: 'Vortex', desc: 'a dragging damage field', w: 2.3, range: 7, cd: 3.2, aoe: true, duration: 3.2, powerMul: 0.36 },
+  { key: 'orbit', name: 'Orbit', desc: 'three orbiting blades around you', w: 2, range: 3, cd: 4, aoe: true, duration: 4.2, powerMul: 0.55 },
+  { key: 'beam', name: 'Beam', desc: 'an instant piercing beam', w: 2.2, range: 10, cd: 2, pierce: true, powerMul: 1.25 },
+  { key: 'mine', name: 'Mine', desc: 'an armed rune trap', w: 2.1, range: 6, cd: 2.4, aoe: true, duration: 8, powerMul: 1.4 },
 ];
 const DMG_TYPES = [
   { key: 'phys', name: 'Physical', color: '#e8e2d0', onHit: null },
@@ -341,6 +407,7 @@ const DMG_TYPES = [
 // Status effect definitions — the single source of truth for both player and mobs.
 // kind: 'debuff' | 'buff'. Fields consumed by the client's status engine.
 export const STATUS = {
+  bleed:      { kind: 'debuff', name: 'Bleed', color: '#ef5263', dot: 0.13, stacks: true, icon: '!' },
   burn:       { kind: 'debuff', name: 'Burn', color: '#ff7a3c', dot: 0.14, stacks: true, icon: '🔥' },
   poison:     { kind: 'debuff', name: 'Poison', color: '#8fd14b', dot: 0.11, stacks: true, icon: '☠' },
   slow:       { kind: 'debuff', name: 'Slow', color: '#7fb0d0', moveMul: 0.5, icon: '🐌' },
@@ -357,7 +424,10 @@ export const STATUS = {
   shield:     { kind: 'buff', name: 'Shield', color: '#8fd1ff', absorb: true, icon: '◈' },
 };
 const ABILITY_ADJ = ['Searing', 'Riven', 'Umbral', 'Tempest', 'Gloom', 'Radiant', 'Wither', 'Fractal'];
-const ABILITY_NOUN = { bolt: 'Bolt', nova: 'Burst', cleave: 'Sweep', lance: 'Lance', volley: 'Barrage', chain: 'Arc' };
+const ABILITY_NOUN = {
+  bolt: 'Bolt', nova: 'Burst', cleave: 'Sweep', lance: 'Lance', volley: 'Barrage', chain: 'Arc',
+  meteor: 'Cataclysm', vortex: 'Maelstrom', orbit: 'Halo', beam: 'Ray', mine: 'Sigil',
+};
 // Weapon abilities can grant only OFFENSIVE self-buffs on cast. Defensive buffs
 // (shield, fortify, regen) belong on armor/trinkets, not weapons.
 const WEAPON_SELF_BUFFS = ['haste', 'rage'];
@@ -367,7 +437,7 @@ export function generateAbility(seed, salt, ilvl, rarity, base) {
   const shape = rng.weighted(ABILITY_SHAPES);
   const dtype = rng.pick(DMG_TYPES);
   const scale = 1 + ilvl * 0.07;
-  const power = Math.round(rng.int(6, 12) * scale * rarity.mul);
+  const power = Math.round(rng.int(6, 12) * scale * rarity.mul * (shape.powerMul || 1));
   const cd = Math.max(0.4, +(shape.cd * rng.float(0.85, 1.1) / rarity.mul).toFixed(2));
   const name = `${rng.pick(ABILITY_ADJ)} ${ABILITY_NOUN[shape.key]}`;
 
@@ -386,6 +456,7 @@ export function generateAbility(seed, salt, ilvl, rarity, base) {
   if (shape.multi) parts.push(`(${shape.multi} projectiles)`);
   if (shape.chain) parts.push(`chaining to ${shape.chain} enemies`);
   if (shape.pierce) parts.push('piercing all in its path');
+  if (shape.duration) parts.push(`lasting ${shape.duration}s`);
   if (onHit) {
     const s = STATUS[onHit.status];
     const chanceTxt = onHit.chance >= 1 ? 'inflicting' : `with a ${Math.round(onHit.chance * 100)}% chance to inflict`;
@@ -397,7 +468,7 @@ export function generateAbility(seed, salt, ilvl, rarity, base) {
     name, shape: shape.key, shapeName: shape.name, range: shape.range,
     dmgType: dtype.key, dmgTypeName: dtype.name, color: dtype.color,
     power, cd, aoe: !!shape.aoe, pierce: !!shape.pierce, multi: shape.multi || 1,
-    chain: shape.chain || 0,
+    chain: shape.chain || 0, duration: shape.duration || 0,
     onHit, selfBuff,
     desc: parts.join(' ') + '.',
   };
