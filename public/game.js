@@ -6,8 +6,9 @@ import { buildSprites, sprites, frameFor } from './sprites.js?v=5';
 import { UPGRADES, UPGRADE_CATEGORIES, availableCharacters, characterById, computeUpgradeEffects, nextCost } from './upgrades.js?v=6';
 
 // ---------- high-definition art ----------
-// Generated atlases are the primary renderer. The procedural sprite system below
-// remains a zero-network fallback while the images decode or if an asset fails.
+// Each actor uses one definitive illustration. Motion is applied to the whole
+// illustration in code so a walk cycle can never swap identity between frames.
+// The procedural sprite system below remains a zero-network fallback.
 function loadArt(src) {
   const img = new Image();
   img.decoding = 'async';
@@ -16,20 +17,11 @@ function loadArt(src) {
 }
 const HD = {
   characters: loadArt('./assets/hd/character-atlas.png'),
-  heroWalk: loadArt('./assets/hd/hero-walk-atlas.png'),
-  mobWalk: loadArt('./assets/hd/mob-walk-atlas.png'),
-  eliteWalk: loadArt('./assets/hd/elite-walk-atlas.png'),
   environment: loadArt('./assets/hd/environment-atlas.png'),
   icons: loadArt('./assets/hd/icon-atlas.png'),
 };
 const HD_HERO_COL = { wanderer:0, ember:1, iron:2, shade:3 };
 const HD_MOB_CELL = { grub:[0,1], skitter:[1,1], brute:[2,1], shade:[3,1], spitter:[0,2], warden:[1,2], boss:[2,2] };
-const HD_MOB_ANIM = {
-  grub:{ atlas:'mobWalk', row:0, rows:4 }, skitter:{ atlas:'mobWalk', row:1, rows:4 },
-  brute:{ atlas:'mobWalk', row:2, rows:4 }, shade:{ atlas:'mobWalk', row:3, rows:4 },
-  spitter:{ atlas:'eliteWalk', row:0, rows:3 }, warden:{ atlas:'eliteWalk', row:1, rows:3 },
-  boss:{ atlas:'eliteWalk', row:2, rows:3 },
-};
 const HD_MOB_SIZE = {
   grub:[46,38], skitter:[48,38], brute:[54,50], shade:[44,48],
   spitter:[48,42], warden:[50,52], boss:[76,72],
@@ -48,9 +40,9 @@ function drawArtCell(img, col, row, cols, rows, dx, dy, dw, dh, flip = false, al
   const sy = Math.round(row * img.naturalHeight / rows);
   const sw = Math.round((col + 1) * img.naturalWidth / cols) - sx;
   const sh = Math.round((row + 1) * img.naturalHeight / rows) - sy;
-  const smooth = ctx.imageSmoothingEnabled;
   ctx.save();
   ctx.imageSmoothingEnabled = true;
+  if ('imageSmoothingQuality' in ctx) ctx.imageSmoothingQuality = 'high';
   ctx.globalAlpha *= alpha;
   if (flip) {
     ctx.translate(dx + dw, dy);
@@ -60,8 +52,66 @@ function drawArtCell(img, col, row, cols, rows, dx, dy, dw, dh, flip = false, al
     ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
   }
   ctx.restore();
-  ctx.imageSmoothingEnabled = smooth;
   return true;
+}
+
+function drawArtCellMotion(img, col, row, cols, rows, cx, cy, dw, dh, flip = false, motion = {}) {
+  if (!artReady(img)) return false;
+  ctx.save();
+  ctx.translate(cx + (motion.x || 0), cy + (motion.y || 0));
+  ctx.rotate(motion.rotation || 0);
+  ctx.scale(motion.scaleX || 1, motion.scaleY || 1);
+  const drawn = drawArtCell(img, col, row, cols, rows, -dw / 2, -dh / 2, dw, dh, flip, motion.alpha ?? 1);
+  ctx.restore();
+  return drawn;
+}
+
+function mobMotionFor(m, now, phase) {
+  const speed = m.key === 'skitter' ? 82 : (m.boss ? 155 : 118);
+  const stride = (now + phase * 11) / speed;
+  const step = Math.sin(stride);
+  const lift = Math.abs(Math.cos(stride));
+  const motion = { x:0, y:0, rotation:0, scaleX:1, scaleY:1, alpha:1 };
+
+  if (!m.moving) {
+    const breath = Math.sin(now / 360 + phase);
+    motion.y = m.key === 'shade' ? breath * .55 : breath * .14;
+    motion.rotation = m.key === 'shade' ? Math.sin(now / 520 + phase) * .012 : 0;
+    motion.scaleX = 1 + breath * .004;
+    motion.scaleY = 1 - breath * .004;
+    return motion;
+  }
+
+  switch (m.key) {
+    case 'grub':
+      motion.x = step * .35; motion.y = -lift * .2; motion.rotation = step * .018;
+      motion.scaleX = 1 + step * .026; motion.scaleY = 1 - step * .022;
+      break;
+    case 'skitter':
+      motion.x = step * .7; motion.y = -lift * .22; motion.rotation = step * .025;
+      motion.scaleX = 1 + lift * .03; motion.scaleY = 1 - lift * .025;
+      break;
+    case 'brute':
+      motion.x = step * .4; motion.y = -lift * .38; motion.rotation = step * .022;
+      motion.scaleX = 1 - step * .012; motion.scaleY = 1 + lift * .012;
+      break;
+    case 'shade':
+      motion.x = step * .42; motion.y = Math.sin(now / 180 + phase) * .7;
+      motion.rotation = step * .018; motion.scaleX = 1 + step * .012; motion.scaleY = 1 - step * .012;
+      break;
+    case 'spitter':
+      motion.x = step * .42; motion.y = -lift * .25; motion.rotation = step * .028;
+      motion.scaleX = 1 + step * .018; motion.scaleY = 1 - step * .018;
+      break;
+    case 'warden':
+      motion.x = step * .3; motion.y = -lift * .3; motion.rotation = step * .016;
+      motion.scaleY = 1 + lift * .008;
+      break;
+    default:
+      motion.x = step * .25; motion.y = -lift * .25; motion.rotation = step * .01;
+      motion.scaleY = 1 + lift * .006;
+  }
+  return motion;
 }
 
 function atlasPosition(col, row, cols, rows) {
@@ -238,7 +288,7 @@ const TILE = 20;              // world units per tile
 const VIEW_TILES_X = 30, VIEW_TILES_Y = 20;
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
-const DPR = Math.min(window.devicePixelRatio || 1, 2);
+const DEVICE_DPR = Math.min(window.devicePixelRatio || 1, 2);
 
 // ---------- game state ----------
 let G = null; // whole run state
@@ -332,14 +382,18 @@ const Audio = (() => {
 
 function resize() {
   const cw = VIEW_TILES_X * TILE, ch = VIEW_TILES_Y * TILE;
-  cv.width = cw * DPR; cv.height = ch * DPR;
   // On narrow portrait screens, fill the height and let #game crop the wide
   // camera around its centered hero. Landscape and desktop retain full framing.
   const portraitCrop = window.innerWidth <= 560 && window.innerHeight > window.innerWidth;
   const scale = portraitCrop ? window.innerHeight / ch : Math.min(window.innerWidth / cw, window.innerHeight / ch);
+  // Match the backing canvas to its displayed size. The old fixed 600x400
+  // buffer was enlarged by CSS on most screens, which made detailed art look
+  // translucent and grainy even when image smoothing was enabled.
+  const renderScale = Math.min(DEVICE_DPR * scale, 3);
+  cv.width = Math.round(cw * renderScale); cv.height = Math.round(ch * renderScale);
   cv.style.width = cw * scale + 'px';
   cv.style.height = ch * scale + 'px';
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
   ctx.imageSmoothingEnabled = false;
 }
 window.addEventListener('resize', resize);
@@ -1529,24 +1583,13 @@ function draw() {
     const sprObj = SPR.mob[m.key] || SPR.mob.grub;
     const spr = frameFor(sprObj, m.fx * 0.7);   // phase by position so they don't sync
     const hdCell = HD_MOB_CELL[m.key];
-    const animDef = HD_MOB_ANIM[m.key];
-    const animAtlas = animDef ? HD[animDef.atlas] : null;
-    const useAnim = !!animDef && artReady(animAtlas);
-    const useHd = useAnim || (!!hdCell && artReady(HD.characters));
+    const useHd = !!hdCell && artReady(HD.characters);
     const mobSize = HD_MOB_SIZE[m.key] || (m.boss ? [76,72] : [46,42]);
     const dw = useHd ? mobSize[0] : (m.boss ? 54 : 36);
     const dh = useHd ? mobSize[1] : dw;
     const now = Date.now();
-    const strideMs = m.key === 'skitter' ? 82 : (m.boss ? 155 : 120);
     const phase = (Number(m.id) || Math.round(m.fx * 13 + m.fy * 17)) * 37;
-    const mobFrame = m.moving ? Math.floor((now + phase) / strideMs) % 4 : 0;
-    const bob = m.key === 'shade'
-      ? Math.sin(now / 190 + phase) * 0.8
-      : (m.moving ? [0, -0.35, 0, -0.2][mobFrame] : Math.sin(now / 320 + phase) * 0.2);
-    const mobAtlas = useAnim ? animAtlas : HD.characters;
-    const mobCol = useAnim ? mobFrame : hdCell?.[0];
-    const mobRow = useAnim ? animDef.row : hdCell?.[1];
-    const mobRows = useAnim ? animDef.rows : 3;
+    const motion = mobMotionFor(m, now, phase);
     // telegraph flash before a special attack — the player's cue to react
     if (m.telegraph > 0) {
       if (m.telegraphKind === 'slam') {
@@ -1569,17 +1612,17 @@ function draw() {
     ctx.beginPath(); ctx.ellipse(sx, sy + dh*.22, dw*.27, Math.max(2.5,dh*.075), 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
     // face the player: flip horizontally if player is to the left
     const faceLeft = G.player.px < (m.fx*TILE+TILE/2);
-    if (useHd) drawArtCell(mobAtlas, mobCol, mobRow, 4, mobRows, sx-dw/2, sy-dh/2+bob, dw, dh, faceLeft);
+    if (useHd) drawArtCellMotion(HD.characters, hdCell[0], hdCell[1], 4, 3, sx, sy, dw, dh, faceLeft, motion);
     else {
-      ctx.save(); ctx.translate(sx, sy + bob); if (faceLeft) ctx.scale(-1, 1);
+      ctx.save(); ctx.translate(sx, sy + motion.y); if (faceLeft) ctx.scale(-1, 1);
       ctx.drawImage(spr, -dw/2, -dh/2, dw, dh); ctx.restore();
     }
     ctx.shadowBlur = 0;
     // hit flash: white silhouette overlay using the sprite as a mask
     if (m.hitFlash > 0) {
       ctx.save(); ctx.globalAlpha = m.hitFlash / 0.15 * 0.8; ctx.globalCompositeOperation = 'lighter';
-      if (useHd) drawArtCell(mobAtlas, mobCol, mobRow, 4, mobRows, sx-dw/2, sy-dh/2+bob, dw, dh, faceLeft);
-      else { ctx.translate(sx, sy + bob); if (faceLeft) ctx.scale(-1,1); ctx.drawImage(spr, -dw/2, -dh/2, dw, dh); }
+      if (useHd) drawArtCellMotion(HD.characters, hdCell[0], hdCell[1], 4, 3, sx, sy, dw, dh, faceLeft, motion);
+      else { ctx.translate(sx, sy + motion.y); if (faceLeft) ctx.scale(-1,1); ctx.drawImage(spr, -dw/2, -dh/2, dw, dh); }
       ctx.restore();
     }
     // hp bar
@@ -1624,31 +1667,31 @@ function draw() {
   const psx=Math.round(p.px-camX), psy=Math.round(p.py-camY);
   if (p.invuln>0 && Math.floor(Date.now()/60)%2) {} else {
     const now = Date.now();
-    const walkFrame = p.moving ? Math.floor(now / 105) % 4 : 0;
-    const bob = p.moving ? [0, -0.7, 0, -0.45][walkFrame] : Math.sin(now / 260) * 0.45;
-    ctx.shadowColor = p.dashT>0 ? '#6fe3c4' : (hasStatus(p,'rage') ? '#ff5d6c' : '#6fe3c4');
-    ctx.shadowBlur = p.dashT>0 ? 16 : 5;
+    const walkPhase = now / 95;
+    const walkStep = Math.sin(walkPhase);
+    const walkLift = Math.abs(Math.cos(walkPhase));
+    const heroMotion = p.moving
+      ? { x:walkStep * .38, y:-walkLift * .45, rotation:walkStep * .018, scaleX:1 + walkStep * .012, scaleY:1 - walkLift * .012, alpha:1 }
+      : { x:0, y:Math.sin(now / 280) * .2, rotation:Math.sin(now / 560) * .004, scaleX:1, scaleY:1, alpha:1 };
+    ctx.shadowColor = p.dashT>0 ? '#6fe3c4' : '#ff5d6c';
+    ctx.shadowBlur = p.dashT>0 ? 14 : (hasStatus(p,'rage') ? 4 : 0);
     const faceLeft = p.dir.x < -0.1;
     const hero = characterById(p.characterId);
     const hspr = frameFor(SPR.hero?.[p.characterId] || SPR.hero?.wanderer || SPR.hero, p.moving ? now/60 : 0);
     const heroCol = HD_HERO_COL[p.characterId] ?? HD_HERO_COL.wanderer;
     const useHdHero = artReady(HD.characters);
-    const useWalkCycle = p.moving && artReady(HD.heroWalk);
     // Keep the readable silhouette close to a single 20-unit corridor tile.
     const heroW = useHdHero ? 38 : 36, heroH = useHdHero ? 42 : 36;
-    const heroAtlas = useWalkCycle ? HD.heroWalk : HD.characters;
-    const heroRow = useWalkCycle ? walkFrame : 0;
-    const heroRows = useWalkCycle ? 4 : 3;
     // A restrained sigil under the hero makes the focal point instantly clear.
     ctx.save(); ctx.globalAlpha = .22 + Math.sin(Date.now()/420) * .035; ctx.strokeStyle = hero.color || '#6fe3c4'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.ellipse(psx, psy + 7, 10, 4, 0, 0, Math.PI * 2); ctx.stroke();
     ctx.globalAlpha = .09; ctx.beginPath(); ctx.moveTo(psx - 7, psy + 7); ctx.lineTo(psx, psy + 2); ctx.lineTo(psx + 7, psy + 7); ctx.closePath(); ctx.stroke(); ctx.restore();
     ctx.save(); ctx.globalAlpha = .38; ctx.fillStyle = '#020306'; ctx.beginPath(); ctx.ellipse(psx, psy + 8, 8, 2.5, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-    if (useHdHero) drawArtCell(heroAtlas, heroCol, heroRow, 4, heroRows, psx-heroW/2, psy-heroH/2+bob, heroW, heroH, faceLeft);
-    else { ctx.save(); ctx.translate(psx, psy + bob); if (faceLeft) ctx.scale(-1,1); ctx.drawImage(hspr, -18, -20, 36, 36); ctx.restore(); }
+    if (useHdHero) drawArtCellMotion(HD.characters, heroCol, 0, 4, 3, psx, psy, heroW, heroH, faceLeft, heroMotion);
+    else { ctx.save(); ctx.translate(psx, psy + heroMotion.y); if (faceLeft) ctx.scale(-1,1); ctx.drawImage(hspr, -18, -20, 36, 36); ctx.restore(); }
     ctx.shadowBlur = 0;
     // hit flash
-    if (p.hitFlash > 0) { ctx.save(); ctx.globalAlpha = p.hitFlash/0.2*0.7; ctx.globalCompositeOperation='lighter'; if (useHdHero) drawArtCell(heroAtlas,heroCol,heroRow,4,heroRows,psx-heroW/2,psy-heroH/2+bob,heroW,heroH,faceLeft); else { ctx.translate(psx,psy+bob); if(faceLeft)ctx.scale(-1,1); ctx.drawImage(hspr,-18,-20,36,36); } ctx.restore(); }
+    if (p.hitFlash > 0) { ctx.save(); ctx.globalAlpha = p.hitFlash/0.2*0.7; ctx.globalCompositeOperation='lighter'; if (useHdHero) drawArtCellMotion(HD.characters,heroCol,0,4,3,psx,psy,heroW,heroH,faceLeft,heroMotion); else { ctx.translate(psx,psy+heroMotion.y); if(faceLeft)ctx.scale(-1,1); ctx.drawImage(hspr,-18,-20,36,36); } ctx.restore(); }
     // small facing dot toward aim, tinted by selected character
     ctx.fillStyle=hero.color || '#6fe3c4'; ctx.globalAlpha=.8; ctx.beginPath(); ctx.arc(psx+p.dir.x*8, psy+p.dir.y*8, 1.6, 0, 7); ctx.fill(); ctx.globalAlpha=1;
     // shield buff ring
