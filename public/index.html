@@ -6,9 +6,6 @@
 <title>SEEDSPIRE</title>
 <link rel="preload" as="image" href="assets/hd/seedspire-key-art.png" />
 <link rel="preload" as="image" href="assets/hd/character-atlas.png" />
-<link rel="preload" as="image" href="assets/hd/hero-walk-atlas.png" />
-<link rel="preload" as="image" href="assets/hd/mob-walk-atlas.png" />
-<link rel="preload" as="image" href="assets/hd/elite-walk-atlas.png" />
 <link rel="preload" as="image" href="assets/hd/environment-atlas.png" />
 <link rel="preload" as="image" href="assets/hd/icon-atlas.png" />
 <style>
@@ -48,7 +45,7 @@
 
   /* ---------- Play area ---------- */
   #game{position:relative;flex:1;display:flex;align-items:center;justify-content:center}
-  canvas{image-rendering:pixelated;touch-action:none;background:var(--wall);max-width:100%;max-height:100%}
+  canvas{image-rendering:auto;touch-action:none;background:var(--wall);max-width:100%;max-height:100%}
   #hud{position:absolute;top:0;left:0;right:0;padding:12px 14px;display:flex;gap:14px;align-items:center;
     pointer-events:none;font-size:12px}
   .stat{background:rgba(12,15,24,.82);border:1px solid var(--line);border-radius:8px;padding:6px 10px}
@@ -150,7 +147,7 @@
   html,body{background:#05070b}
   body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:100;
     background:linear-gradient(rgba(255,255,255,.018) 1px,transparent 1px);background-size:100% 3px;
-    mix-blend-mode:soft-light;opacity:.2}
+    mix-blend-mode:soft-light;opacity:.06}
   #game{isolation:isolate;background:
     radial-gradient(circle at 50% 48%,rgba(36,53,69,.25),transparent 48%),
     linear-gradient(135deg,#070a10,#04060a)}
@@ -159,7 +156,7 @@
   #game::after{content:"SEEDBOUND  //  LIVE DESCENT";position:absolute;z-index:5;left:24px;top:74px;pointer-events:none;
     color:rgba(116,243,207,.22);font-size:8px;letter-spacing:.24em;writing-mode:vertical-rl}
   canvas{width:min(100vw,150vh);height:min(100vh,66.6667vw);max-width:none;max-height:none;object-fit:contain;
-    image-rendering:auto;filter:saturate(1.12) contrast(1.06);box-shadow:0 0 100px rgba(0,0,0,.8)}
+    image-rendering:auto;filter:none;box-shadow:0 0 100px rgba(0,0,0,.8)}
 
   #hud{z-index:8;padding:18px 22px;gap:9px;background:linear-gradient(180deg,rgba(3,5,9,.68),transparent);}
   .stat,.floorTag{position:relative;background:linear-gradient(180deg,rgba(17,23,32,.92),rgba(8,11,17,.88));
@@ -448,6 +445,6 @@
 </div>
 
 <div id="tooltip"></div>
-<script type="module" src="game.js?v=10"></script>
+<script type="module" src="game.js?v=11"></script>
 </body>
 </html>
