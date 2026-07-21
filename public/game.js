@@ -16,10 +16,11 @@ function loadArt(src) {
 }
 const HD = {
   characters: loadArt('./assets/hd/character-atlas.png'),
+  heroWalk: loadArt('./assets/hd/hero-walk-atlas.png'),
   environment: loadArt('./assets/hd/environment-atlas.png'),
   icons: loadArt('./assets/hd/icon-atlas.png'),
 };
-const HD_HERO_CELL = { wanderer:[0,0], ember:[1,0], iron:[2,0], shade:[3,0] };
+const HD_HERO_COL = { wanderer:0, ember:1, iron:2, shade:3 };
 const HD_MOB_CELL = { grub:[0,1], skitter:[1,1], brute:[2,1], shade:[3,1], spitter:[0,2], warden:[1,2], boss:[2,2] };
 const HD_TREASURE_CELL = [3,2];
 const HD_ABILITY_COL = { bolt:0, nova:1, cleave:2, lance:3, volley:4, chain:5 };
@@ -552,7 +553,9 @@ function isWall(tx, ty) {
   return G.grid[ty][tx] === T.WALL;
 }
 function canMove(px, py) {
-  const r = 6;
+  // A compact collision footprint keeps one-tile passages and inside corners
+  // fluid while the larger painted silhouette can overlap them decoratively.
+  const r = 4.5;
   for (const [ox, oy] of [[-r,-r],[r,-r],[-r,r],[r,r]]) {
     if (isWall(Math.floor((px + ox) / TILE), Math.floor((py + oy) / TILE))) return false;
   }
@@ -1584,29 +1587,36 @@ function draw() {
   // player
   const psx=Math.round(p.px-camX), psy=Math.round(p.py-camY);
   if (p.invuln>0 && Math.floor(Date.now()/60)%2) {} else {
-    const bob = Math.sin(Date.now()/200) * 1;
+    const now = Date.now();
+    const walkFrame = p.moving ? Math.floor(now / 105) % 4 : 0;
+    const bob = p.moving ? [0, -0.7, 0, -0.45][walkFrame] : Math.sin(now / 260) * 0.45;
     ctx.shadowColor = p.dashT>0 ? '#6fe3c4' : (hasStatus(p,'rage') ? '#ff5d6c' : '#6fe3c4');
     ctx.shadowBlur = p.dashT>0 ? 16 : 5;
     const faceLeft = p.dir.x < -0.1;
     const hero = characterById(p.characterId);
-    const hspr = frameFor(SPR.hero?.[p.characterId] || SPR.hero?.wanderer || SPR.hero, p.moving ? Date.now()/60 : 0);  // faster stride while moving
-    const heroCell = HD_HERO_CELL[p.characterId] || HD_HERO_CELL.wanderer;
+    const hspr = frameFor(SPR.hero?.[p.characterId] || SPR.hero?.wanderer || SPR.hero, p.moving ? now/60 : 0);
+    const heroCol = HD_HERO_COL[p.characterId] ?? HD_HERO_COL.wanderer;
     const useHdHero = artReady(HD.characters);
-    const heroW = useHdHero ? 82 : 36, heroH = useHdHero ? 74 : 36;
+    const useWalkCycle = p.moving && artReady(HD.heroWalk);
+    // Keep the readable silhouette close to a single 20-unit corridor tile.
+    const heroW = useHdHero ? 38 : 36, heroH = useHdHero ? 42 : 36;
+    const heroAtlas = useWalkCycle ? HD.heroWalk : HD.characters;
+    const heroRow = useWalkCycle ? walkFrame : 0;
+    const heroRows = useWalkCycle ? 4 : 3;
     // A restrained sigil under the hero makes the focal point instantly clear.
     ctx.save(); ctx.globalAlpha = .22 + Math.sin(Date.now()/420) * .035; ctx.strokeStyle = hero.color || '#6fe3c4'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.ellipse(psx, psy + 10, 15, 6, 0, 0, Math.PI * 2); ctx.stroke();
-    ctx.globalAlpha = .09; ctx.beginPath(); ctx.moveTo(psx - 10, psy + 10); ctx.lineTo(psx, psy + 3); ctx.lineTo(psx + 10, psy + 10); ctx.closePath(); ctx.stroke(); ctx.restore();
-    ctx.save(); ctx.globalAlpha = .38; ctx.fillStyle = '#020306'; ctx.beginPath(); ctx.ellipse(psx, psy + 12, 13, 4, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-    if (useHdHero) drawArtCell(HD.characters, heroCell[0], heroCell[1], 4, 3, psx-heroW/2, psy-heroH/2+bob, heroW, heroH, faceLeft);
+    ctx.beginPath(); ctx.ellipse(psx, psy + 7, 10, 4, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = .09; ctx.beginPath(); ctx.moveTo(psx - 7, psy + 7); ctx.lineTo(psx, psy + 2); ctx.lineTo(psx + 7, psy + 7); ctx.closePath(); ctx.stroke(); ctx.restore();
+    ctx.save(); ctx.globalAlpha = .38; ctx.fillStyle = '#020306'; ctx.beginPath(); ctx.ellipse(psx, psy + 8, 8, 2.5, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    if (useHdHero) drawArtCell(heroAtlas, heroCol, heroRow, 4, heroRows, psx-heroW/2, psy-heroH/2+bob, heroW, heroH, faceLeft);
     else { ctx.save(); ctx.translate(psx, psy + bob); if (faceLeft) ctx.scale(-1,1); ctx.drawImage(hspr, -18, -20, 36, 36); ctx.restore(); }
     ctx.shadowBlur = 0;
     // hit flash
-    if (p.hitFlash > 0) { ctx.save(); ctx.globalAlpha = p.hitFlash/0.2*0.7; ctx.globalCompositeOperation='lighter'; if (useHdHero) drawArtCell(HD.characters,heroCell[0],heroCell[1],4,3,psx-heroW/2,psy-heroH/2+bob,heroW,heroH,faceLeft); else { ctx.translate(psx,psy+bob); if(faceLeft)ctx.scale(-1,1); ctx.drawImage(hspr,-18,-20,36,36); } ctx.restore(); }
+    if (p.hitFlash > 0) { ctx.save(); ctx.globalAlpha = p.hitFlash/0.2*0.7; ctx.globalCompositeOperation='lighter'; if (useHdHero) drawArtCell(heroAtlas,heroCol,heroRow,4,heroRows,psx-heroW/2,psy-heroH/2+bob,heroW,heroH,faceLeft); else { ctx.translate(psx,psy+bob); if(faceLeft)ctx.scale(-1,1); ctx.drawImage(hspr,-18,-20,36,36); } ctx.restore(); }
     // small facing dot toward aim, tinted by selected character
-    ctx.fillStyle=hero.color || '#6fe3c4'; ctx.globalAlpha=.8; ctx.beginPath(); ctx.arc(psx+p.dir.x*11, psy+p.dir.y*11, 2, 0, 7); ctx.fill(); ctx.globalAlpha=1;
+    ctx.fillStyle=hero.color || '#6fe3c4'; ctx.globalAlpha=.8; ctx.beginPath(); ctx.arc(psx+p.dir.x*8, psy+p.dir.y*8, 1.6, 0, 7); ctx.fill(); ctx.globalAlpha=1;
     // shield buff ring
-    if (hasStatus(p,'shield')) { ctx.strokeStyle='#8fd1ff'; ctx.lineWidth=1.5; ctx.globalAlpha=.7; ctx.beginPath(); ctx.arc(psx,psy,14,0,7); ctx.stroke(); ctx.globalAlpha=1; }
+    if (hasStatus(p,'shield')) { ctx.strokeStyle='#8fd1ff'; ctx.lineWidth=1.5; ctx.globalAlpha=.7; ctx.beginPath(); ctx.arc(psx,psy,10,0,7); ctx.stroke(); ctx.globalAlpha=1; }
   }
 
   // damage numbers
