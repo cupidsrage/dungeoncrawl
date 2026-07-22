@@ -17,16 +17,8 @@ function loadArt(src) {
 }
 const HD = {
   characters: loadArt('./assets/hd/character-atlas.png'),
-  environment: loadArt('./assets/hd/environment-atlas.png'),
+  environment: loadArt('./assets/hd/environment-atlas-v2.png'),
   icons: loadArt('./assets/hd/icon-atlas.png'),
-};
-const HD_VFX = {
-  phys: loadArt('./assets/hd/vfx/phys.webp'),
-  fire: loadArt('./assets/hd/vfx/fire.webp'),
-  cold: loadArt('./assets/hd/vfx/cold.webp'),
-  lightning: loadArt('./assets/hd/vfx/lightning.webp'),
-  void: loadArt('./assets/hd/vfx/void.webp'),
-  poison: loadArt('./assets/hd/vfx/poison.webp'),
 };
 const HD_HERO_WALK = {
   wanderer: loadArt('./assets/hd/animations/wanderer-walk.webp'),
@@ -50,9 +42,9 @@ const HD_MOB_WALK = {
 const HD_HERO_COL = { wanderer:0, ember:1, iron:2, shade:3 };
 const HD_MOB_CELL = { grub:[0,1], skitter:[1,1], brute:[2,1], shade:[3,1], spitter:[0,2], warden:[1,2], boss:[2,2] };
 const HD_MOB_SIZE = {
-  grub:[40,32], skitter:[42,34], brute:[48,46], shade:[38,44],
-  spitter:[42,38], warden:[44,48], boss:[66,66],
-  leech:[42,34], sentinel:[46,48], cultist:[42,48], mimic:[48,40],
+  grub:[22,18], skitter:[23,19], brute:[29,28], shade:[20,27],
+  spitter:[24,21], warden:[23,28], boss:[42,44],
+  leech:[22,18], sentinel:[25,28], cultist:[22,27], mimic:[27,22],
 };
 const HD_MOB_FRAME_MS = {
   grub:115, skitter:82, brute:145, shade:125, spitter:138, warden:140, boss:165,
@@ -70,7 +62,7 @@ const HD_ITEM_COL = {
 };
 
 function artReady(img) { return !!img && img.complete && img.naturalWidth > 0; }
-function drawArtCell(img, col, row, cols, rows, dx, dy, dw, dh, flip = false, alpha = 1) {
+function drawArtCell(img, col, row, cols, rows, dx, dy, dw, dh, flip = false, alpha = 1, filter = 'none') {
   if (!artReady(img)) return false;
   // Generated atlases are not always evenly divisible by their grid dimensions.
   // Rounded cell edges prevent bilinear sampling from bleeding an adjacent frame
@@ -82,6 +74,7 @@ function drawArtCell(img, col, row, cols, rows, dx, dy, dw, dh, flip = false, al
   ctx.save();
   ctx.imageSmoothingEnabled = true;
   if ('imageSmoothingQuality' in ctx) ctx.imageSmoothingQuality = 'high';
+  ctx.filter = filter;
   ctx.globalAlpha *= alpha;
   if (flip) {
     ctx.translate(dx + dw, dy);
@@ -103,25 +96,120 @@ function drawCenteredArtCell(img, col, row, cols, rows, cx, cy, dw, dh, flip = f
   return drawArtCell(img, col, row, cols, rows, cx - dw / 2, cy - dh / 2, dw, dh, flip, alpha);
 }
 
+function drawFloorArt(tx, ty, dx, dy, size) {
+  const img = HD.environment;
+  if (!artReady(img)) return false;
+  // The large cobble cell is split into a seamless four-by-four map patch. This keeps stones broad
+  // enough to read at gameplay scale and prevents the atlas' decorative grid
+  // from turning into noisy pixels when reduced to a 20-unit floor tile.
+  const cellX0 = Math.round(img.naturalWidth / 4), cellX1 = Math.round(img.naturalWidth / 2);
+  const cellY0 = 0, cellY1 = Math.round(img.naturalHeight / 2);
+  const parts = 4, cellW = cellX1 - cellX0, cellH = cellY1 - cellY0;
+  const qx = ((tx % parts) + parts) % parts, qy = ((ty % parts) + parts) % parts;
+  const sx = Math.round(cellX0 + qx * cellW / parts), sy = Math.round(cellY0 + qy * cellH / parts);
+  const ex = Math.round(cellX0 + (qx + 1) * cellW / parts), ey = Math.round(cellY0 + (qy + 1) * cellH / parts);
+  ctx.save(); ctx.imageSmoothingEnabled = true;
+  if ('imageSmoothingQuality' in ctx) ctx.imageSmoothingQuality = 'high';
+  ctx.filter = 'brightness(.86) contrast(1.055) saturate(.72)';
+  ctx.drawImage(img, sx + .5, sy + .5, ex - sx - 1, ey - sy - 1, dx, dy, size, size);
+  ctx.restore();
+  return true;
+}
+
+// Generated movement sheets leave different amounts of transparent padding in
+// every frame. Drawing the full cells makes actors tiny and turns that padding
+// variation into a visible wobble. Measure the opaque content once, preserve a
+// single scale for the whole sheet, center it horizontally, and pin every pose
+// to the same ground line.
+const FRAME_METRICS = new WeakMap();
+function frameMetrics(img, cols, rows) {
+  let grids = FRAME_METRICS.get(img);
+  const key = `${cols}x${rows}`;
+  if (grids?.[key]) return grids[key];
+  if (!artReady(img)) return null;
+  try {
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    g.drawImage(img, 0, 0);
+    const pixels = g.getImageData(0, 0, c.width, c.height).data;
+    const frames = [];
+    let maxW = 1, maxH = 1;
+    for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
+      const sx = Math.round(col * c.width / cols), sy = Math.round(row * c.height / rows);
+      const ex = Math.round((col + 1) * c.width / cols), ey = Math.round((row + 1) * c.height / rows);
+      let x0 = ex, y0 = ey, x1 = sx - 1, y1 = sy - 1;
+      for (let y = sy; y < ey; y++) for (let x = sx; x < ex; x++) {
+        if (pixels[(y * c.width + x) * 4 + 3] < 20) continue;
+        if (x < x0) x0 = x; if (x > x1) x1 = x;
+        if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+      if (x1 < x0 || y1 < y0) { x0 = sx; y0 = sy; x1 = ex - 1; y1 = ey - 1; }
+      const box = { x:x0, y:y0, w:x1-x0+1, h:y1-y0+1 };
+      maxW = Math.max(maxW, box.w); maxH = Math.max(maxH, box.h); frames.push(box);
+    }
+    const result = { frames, maxW, maxH };
+    grids ||= {}; grids[key] = result; FRAME_METRICS.set(img, grids);
+    return result;
+  } catch { return null; }
+}
+
+function drawActorFrame(img, col, row, cols, rows, cx, groundY, maxW, maxH, flip = false, alpha = 1, glow = null) {
+  const metrics = frameMetrics(img, cols, rows);
+  if (!metrics) return false;
+  const box = metrics.frames[row * cols + col];
+  if (!box) return false;
+  const scale = Math.min(maxW / metrics.maxW, maxH / metrics.maxH);
+  const dw = box.w * scale, dh = box.h * scale;
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  if ('imageSmoothingQuality' in ctx) ctx.imageSmoothingQuality = 'high';
+  ctx.globalAlpha *= alpha;
+  ctx.filter = `brightness(1.18) contrast(1.1) saturate(.9) drop-shadow(0 1px 1px rgba(0,0,0,.95))${glow ? ` drop-shadow(0 0 2px ${glow})` : ''}`;
+  ctx.translate(cx, groundY);
+  if (flip) ctx.scale(-1, 1);
+  ctx.drawImage(img, box.x, box.y, box.w, box.h, -dw/2, -dh, dw, dh);
+  ctx.restore();
+  return true;
+}
+
 function effectFrame(time, start = 0, count = 8, frameMs = 70) {
   return start + (Math.floor(time / frameMs) % count);
 }
 
 function drawVfx(dtype, frame, cx, cy, size, rotation = 0, alpha = 1) {
-  const img = HD_VFX[dtype] || HD_VFX.phys;
-  if (!artReady(img)) return false;
   const index = Math.max(0, Math.min(7, frame | 0));
-  const col = index % 4, row = Math.floor(index / 4);
-  const sx = col * img.naturalWidth / 4, sy = row * img.naturalHeight / 2;
-  const sw = img.naturalWidth / 4, sh = img.naturalHeight / 2;
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(rotation);
-  ctx.globalAlpha *= alpha;
-  ctx.globalCompositeOperation = 'screen';
-  ctx.imageSmoothingEnabled = true;
-  if ('imageSmoothingQuality' in ctx) ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(img, sx, sy, sw, sh, -size / 2, -size / 2, size, size);
+  const p = index / 7, s = size / 64;
+  const colors = { phys:'#f4ead1', fire:'#ff6b32', cold:'#6fd9ff', lightning:'#ffe56b', void:'#b46bff', poison:'#8fe35a' };
+  const color = colors[dtype] || colors.phys;
+  ctx.save(); ctx.translate(cx, cy); ctx.rotate(rotation); ctx.scale(s, s);
+  ctx.globalAlpha *= alpha; ctx.globalCompositeOperation = 'lighter';
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.shadowColor = color; ctx.shadowBlur = 8;
+  if (dtype === 'fire') {
+    const r = 8 + p * 20, grad = ctx.createRadialGradient(0, 2, 1, 0, 2, r);
+    grad.addColorStop(0, '#fff7c2'); grad.addColorStop(.24, '#ffbd4a'); grad.addColorStop(.62, '#ff542b'); grad.addColorStop(1, 'rgba(125,18,8,0)');
+    ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(0, 2, r, 0, 7); ctx.fill();
+    ctx.fillStyle = '#ffd76a';
+    for (let i=0;i<5;i++){ const a=i*1.257+p*.8, rr=r*(.55+.18*Math.sin(i*3+p*9)); ctx.beginPath(); ctx.moveTo(Math.cos(a)*rr*.45,Math.sin(a)*rr*.45); ctx.quadraticCurveTo(Math.cos(a+.3)*rr,Math.sin(a+.3)*rr,Math.cos(a)*rr*1.2,Math.sin(a)*rr*1.2); ctx.quadraticCurveTo(Math.cos(a-.25)*rr*.68,Math.sin(a-.25)*rr*.68,Math.cos(a)*rr*.45,Math.sin(a)*rr*.45); ctx.fill(); }
+  } else if (dtype === 'cold') {
+    ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.rotate(p*.35);
+    for (let i=0;i<6;i++){ ctx.rotate(Math.PI/3); ctx.beginPath(); ctx.moveTo(0,3); ctx.lineTo(0,24); ctx.lineTo(-5,17); ctx.moveTo(0,24); ctx.lineTo(5,17); ctx.stroke(); }
+    ctx.strokeStyle='#eaffff';ctx.lineWidth=1.2;ctx.beginPath();ctx.arc(0,0,8+p*8,0,7);ctx.stroke();
+  } else if (dtype === 'lightning') {
+    for (let b=-1;b<=1;b++){ ctx.strokeStyle=b===0?'#fff9c5':color;ctx.lineWidth=b===0?2.4:1.2;ctx.beginPath();ctx.moveTo(-27,b*5);for(let i=1;i<=6;i++){const x=-27+i*9,y=b*5+Math.sin(i*4.7+index*1.9+b)*7*(1-Math.abs(i-3.5)/5);ctx.lineTo(x,y);}ctx.stroke(); }
+  } else if (dtype === 'void') {
+    ctx.globalCompositeOperation='source-over';ctx.fillStyle='rgba(3,2,12,.86)';ctx.beginPath();ctx.arc(0,0,9+p*8,0,7);ctx.fill();
+    ctx.globalCompositeOperation='lighter';ctx.strokeStyle=color;ctx.lineWidth=2.4;
+    for(let i=0;i<3;i++){ctx.beginPath();ctx.arc(0,0,9+i*6+p*5,-p*4+i*1.8,Math.PI*1.35-p*4+i*1.8);ctx.stroke();}
+    ctx.fillStyle='#eadbff';for(let i=0;i<4;i++){const a=i*1.57-p*3,rr=16+p*9;ctx.beginPath();ctx.arc(Math.cos(a)*rr,Math.sin(a)*rr,1.4,0,7);ctx.fill();}
+  } else if (dtype === 'poison') {
+    const grad=ctx.createRadialGradient(0,4,1,0,4,22);grad.addColorStop(0,'#e8ffc2');grad.addColorStop(.35,color);grad.addColorStop(1,'rgba(48,112,25,0)');ctx.fillStyle=grad;ctx.beginPath();ctx.ellipse(0,7,23,12,0,0,7);ctx.fill();
+    ctx.strokeStyle='#cfff8f';ctx.lineWidth=1.5;for(let i=0;i<5;i++){const a=i*1.7+index,rr=6+i*3;ctx.beginPath();ctx.arc(Math.cos(a)*rr,7-Math.sin(a)*rr-(p*12),2+i%2,0,7);ctx.stroke();}
+  } else {
+    ctx.strokeStyle=color;ctx.lineWidth=5-p*2;ctx.beginPath();ctx.arc(0,0,17+p*8,-1.05,1.05);ctx.stroke();
+    ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(0,0,14+p*9,-.92,.92);ctx.stroke();
+    for(let i=0;i<3;i++){ctx.strokeStyle=i%2?color:'#fff';ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(-18+i*7,-12-i*2);ctx.lineTo(17+i*4,12-i*3);ctx.stroke();}
+  }
   ctx.restore();
   return true;
 }
@@ -297,7 +385,9 @@ function activeStatusList(ent) {
 
 // ---------- constants ----------
 const TILE = 20;              // world units per tile
-const VIEW_TILES_X = 30, VIEW_TILES_Y = 20;
+// A closer 24x16 camera makes the hand-painted actors and combat effects
+// readable without changing world collision or corridor geometry.
+const VIEW_TILES_X = 24, VIEW_TILES_Y = 16;
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
 const DEVICE_DPR = Math.min(window.devicePixelRatio || 1, 2);
@@ -1739,8 +1829,10 @@ function draw() {
       // deterministic flagstone variant per tile
       const variant = (tx * 7 + ty * 13) & 3;
       const rareRune = ((tx * 31 + ty * 19) & 63) === 0;
-      const hdFloorCol = rareRune ? 2 : (variant === 1 ? 1 : 0);
-      if (!drawArtCell(HD.environment, hdFloorCol, 0, 4, 2, sx, sy, TILE, TILE)) {
+      const floorDrawn = rareRune
+        ? drawArtCell(HD.environment, 2, 0, 4, 2, sx, sy, TILE, TILE, false, 1, 'brightness(1.14) contrast(1.03) saturate(.86)')
+        : drawFloorArt(tx, ty, sx, sy, TILE);
+      if (!floorDrawn) {
         ctx.drawImage(SPR.floor[variant], sx, sy, TILE, TILE);
       }
       // A hairline of reflected light where carved stone meets the dark.
@@ -1755,11 +1847,11 @@ function draw() {
       }
       if (cell === T.STAIRS) {
         const pulse = 0.72 + 0.28 * Math.sin(Date.now() / 300);
-        if (!drawArtCell(HD.environment, 2, 1, 4, 2, sx, sy, TILE, TILE, false, pulse)) {
+        if (!drawArtCell(HD.environment, 2, 1, 4, 2, sx, sy, TILE, TILE, false, pulse, 'brightness(1.15) contrast(1.04) saturate(.9)')) {
           ctx.globalAlpha = pulse; ctx.drawImage(SPR.stairs, sx, sy, TILE, TILE); ctx.globalAlpha = 1;
         }
       }
-      if (cell === T.ENTRY && !drawArtCell(HD.environment, 3, 1, 4, 2, sx, sy, TILE, TILE)) ctx.drawImage(SPR.entry, sx, sy, TILE, TILE);
+      if (cell === T.ENTRY && !drawArtCell(HD.environment, 3, 1, 4, 2, sx, sy, TILE, TILE, false, 1, 'brightness(1.18) contrast(1.03) saturate(.9)')) ctx.drawImage(SPR.entry, sx, sy, TILE, TILE);
     }
   }
   // walls (drawn only where adjacent to floor, so interiors stay black = depth)
@@ -1771,7 +1863,7 @@ function draw() {
       if (!edge) continue;
       const sx = Math.round(tx*TILE-camX), sy=Math.round(ty*TILE-camY);
       const rootWall = ((tx * 17 + ty * 23) & 15) === 0;
-      if (!drawArtCell(HD.environment, rootWall ? 1 : 0, 1, 4, 2, sx, sy, TILE, TILE)) ctx.drawImage(SPR.wall, sx, sy, TILE, TILE);
+      if (!drawArtCell(HD.environment, rootWall ? 1 : 0, 1, 4, 2, sx, sy, TILE, TILE, false, 1, 'brightness(1.08) contrast(1.05) saturate(.78)')) ctx.drawImage(SPR.wall, sx, sy, TILE, TILE);
       if (G.grid[ty + 1]?.[tx] !== T.WALL) {
         ctx.fillStyle = 'rgba(2,4,8,.58)'; ctx.fillRect(sx, sy + TILE - 2, TILE, 3);
         ctx.fillStyle = 'rgba(122,153,166,.16)'; ctx.fillRect(sx, sy + TILE - 2, TILE, 1);
@@ -1894,10 +1986,10 @@ function draw() {
     if (m.chargeState === 'dash') { ctx.shadowColor = m.color; ctx.shadowBlur = 14; }
     // Grounding shadow keeps larger sprites from appearing to float over tiles.
     ctx.save(); ctx.globalAlpha = m.boss ? .5 : .34; ctx.fillStyle = '#020306';
-    ctx.beginPath(); ctx.ellipse(sx, sy + dh*.22, dw*.27, Math.max(2.5,dh*.075), 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    ctx.beginPath(); ctx.ellipse(sx, sy + dh*.39, dw*.3, Math.max(1.6,dh*.065), 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
     // face the player: flip horizontally if player is to the left
     const faceLeft = G.player.px < (m.fx*TILE+TILE/2);
-    if (useWalk) drawCenteredArtCell(walkAtlas, walkCell[0], walkCell[1], 4, 2, sx, sy, dw, dh, faceLeft);
+    if (useWalk) drawActorFrame(walkAtlas, walkCell[0], walkCell[1], 4, 2, sx, sy + dh*.42, dw, dh, faceLeft, 1, m.elite ? m.color : null);
     else if (useHd) drawCenteredArtCell(HD.characters, hdCell[0], hdCell[1], 4, 3, sx, sy, dw, dh, faceLeft);
     else {
       ctx.save(); ctx.translate(sx, sy); if (faceLeft) ctx.scale(-1, 1);
@@ -1907,7 +1999,7 @@ function draw() {
     // hit flash: white silhouette overlay using the sprite as a mask
     if (m.hitFlash > 0) {
       ctx.save(); ctx.globalAlpha = m.hitFlash / 0.15 * 0.8; ctx.globalCompositeOperation = 'lighter';
-      if (useWalk) drawCenteredArtCell(walkAtlas, walkCell[0], walkCell[1], 4, 2, sx, sy, dw, dh, faceLeft);
+      if (useWalk) drawActorFrame(walkAtlas, walkCell[0], walkCell[1], 4, 2, sx, sy + dh*.42, dw, dh, faceLeft, 1, '#ffffff');
       else if (useHd) drawCenteredArtCell(HD.characters, hdCell[0], hdCell[1], 4, 3, sx, sy, dw, dh, faceLeft);
       else { ctx.translate(sx, sy); if (faceLeft) ctx.scale(-1,1); ctx.drawImage(spr, -dw/2, -dh/2, dw, dh); }
       ctx.restore();
@@ -1975,18 +2067,18 @@ function draw() {
     const heroCol = HD_HERO_COL[p.characterId] ?? HD_HERO_COL.wanderer;
     const useHdHero = useHeroWalk || artReady(HD.characters);
     // Keep the readable silhouette close to a single 20-unit corridor tile.
-    const heroW = 36, heroH = useHdHero ? 42 : 36;
+    const heroW = 23, heroH = useHdHero ? 32 : 30;
     // A restrained sigil under the hero makes the focal point instantly clear.
     ctx.save(); ctx.globalAlpha = .22 + Math.sin(Date.now()/420) * .035; ctx.strokeStyle = hero.color || '#6fe3c4'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.ellipse(psx, psy + 7, 10, 4, 0, 0, Math.PI * 2); ctx.stroke();
     ctx.globalAlpha = .09; ctx.beginPath(); ctx.moveTo(psx - 7, psy + 7); ctx.lineTo(psx, psy + 2); ctx.lineTo(psx + 7, psy + 7); ctx.closePath(); ctx.stroke(); ctx.restore();
-    ctx.save(); ctx.globalAlpha = .38; ctx.fillStyle = '#020306'; ctx.beginPath(); ctx.ellipse(psx, psy + 8, 8, 2.5, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-    if (useHeroWalk) drawCenteredArtCell(heroWalkAtlas, heroWalkCell[0], heroWalkCell[1], 4, 2, psx, psy, heroW, heroH, faceLeft);
+    ctx.save(); ctx.globalAlpha = .48; ctx.fillStyle = '#020306'; ctx.beginPath(); ctx.ellipse(psx, psy + 11, 7, 2, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    if (useHeroWalk) drawActorFrame(heroWalkAtlas, heroWalkCell[0], heroWalkCell[1], 4, 2, psx, psy + 12, heroW, heroH, faceLeft, 1, hero.color || '#6fe3c4');
     else if (useHdHero) drawCenteredArtCell(HD.characters, heroCol, 0, 4, 3, psx, psy, heroW, heroH, faceLeft);
     else { ctx.save(); ctx.translate(psx, psy); if (faceLeft) ctx.scale(-1,1); ctx.drawImage(hspr, -18, -20, 36, 36); ctx.restore(); }
     ctx.shadowBlur = 0;
     // hit flash
-    if (p.hitFlash > 0) { ctx.save(); ctx.globalAlpha = p.hitFlash/0.2*0.7; ctx.globalCompositeOperation='lighter'; if (useHeroWalk) drawCenteredArtCell(heroWalkAtlas,heroWalkCell[0],heroWalkCell[1],4,2,psx,psy,heroW,heroH,faceLeft); else if (useHdHero) drawCenteredArtCell(HD.characters,heroCol,0,4,3,psx,psy,heroW,heroH,faceLeft); else { ctx.translate(psx,psy); if(faceLeft)ctx.scale(-1,1); ctx.drawImage(hspr,-18,-20,36,36); } ctx.restore(); }
+    if (p.hitFlash > 0) { ctx.save(); ctx.globalAlpha = p.hitFlash/0.2*0.7; ctx.globalCompositeOperation='lighter'; if (useHeroWalk) drawActorFrame(heroWalkAtlas,heroWalkCell[0],heroWalkCell[1],4,2,psx,psy+12,heroW,heroH,faceLeft,1,'#ffffff'); else if (useHdHero) drawCenteredArtCell(HD.characters,heroCol,0,4,3,psx,psy,heroW,heroH,faceLeft); else { ctx.translate(psx,psy); if(faceLeft)ctx.scale(-1,1); ctx.drawImage(hspr,-18,-20,36,36); } ctx.restore(); }
     // small facing dot toward aim, tinted by selected character
     ctx.fillStyle=hero.color || '#6fe3c4'; ctx.globalAlpha=.8; ctx.beginPath(); ctx.arc(psx+p.dir.x*8, psy+p.dir.y*8, 1.6, 0, 7); ctx.fill(); ctx.globalAlpha=1;
     // shield buff ring
@@ -2008,13 +2100,13 @@ function draw() {
   ctx.save();
   ctx.globalCompositeOperation = 'screen';
   const bloom = ctx.createRadialGradient(psx, psy, 12, psx, psy, 155);
-  bloom.addColorStop(0, 'rgba(116,243,207,.055)');
-  bloom.addColorStop(.5, 'rgba(73,116,126,.025)');
+  bloom.addColorStop(0, 'rgba(116,243,207,.11)');
+  bloom.addColorStop(.5, 'rgba(73,116,126,.045)');
   bloom.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = bloom; ctx.fillRect(0, 0, cv.width, cv.height);
   ctx.restore();
   const grad=ctx.createRadialGradient(psx,psy,105,psx,psy,430);
-  grad.addColorStop(0,'rgba(2,4,8,0)'); grad.addColorStop(.55,'rgba(3,5,10,.12)'); grad.addColorStop(1,'rgba(2,3,8,.72)');
+  grad.addColorStop(0,'rgba(2,4,8,0)'); grad.addColorStop(.58,'rgba(3,5,10,.07)'); grad.addColorStop(1,'rgba(2,3,8,.38)');
   ctx.fillStyle=grad; ctx.fillRect(0,0,VIEW_TILES_X*TILE,VIEW_TILES_Y*TILE);
   const edgeFog = ctx.createLinearGradient(0,0,0,cv.height);
   edgeFog.addColorStop(0,'rgba(12,9,22,.18)'); edgeFog.addColorStop(.28,'rgba(0,0,0,0)'); edgeFog.addColorStop(1,'rgba(1,3,7,.2)');
@@ -2151,14 +2243,14 @@ function renderInv() {
   }
   // char stats
   const s = p.stats;
-  document.getElementById('charStats').innerHTML = [
-    `Max HP: ${s.maxHp}`, `Armor: ${s.armor}`, `Crit: ${Math.round(s.critChance*100)}% (x${(1.5+s.critDmg).toFixed(1)})`,
-    `Lifesteal: ${Math.round(s.lifesteal*100)}%`, `Move Speed: +${Math.round(s.moveSpeed*100)}%`,
-    `Dodge: ${Math.round(s.dodge*100)}%`, `Cooldown Red.: ${Math.round(s.cdr*100)}%`,
-    `Ability Power: +${Math.round(s.abilityPower*100)}%`, `Ability Area: +${Math.round(s.area*100)}%`,
-    `Attack Speed: +${Math.round(s.attackSpeed*100)}%`, `Block: ${Math.round(s.blockChance*100)}%`,
-    `Loot Luck: +${Math.round(s.luck*100)}%`, `Thorns: ${Math.round(s.thorns)}`,
-  ].map((x) => `<div>${x}</div>`).join('');
+  document.getElementById('charStats').innerHTML = `<div class="char-stat-grid">${[
+    ['Max HP', s.maxHp], ['Armor', s.armor], ['Critical', `${Math.round(s.critChance*100)}% · x${(1.5+s.critDmg).toFixed(1)}`],
+    ['Lifesteal', `${Math.round(s.lifesteal*100)}%`], ['Move speed', `+${Math.round(s.moveSpeed*100)}%`],
+    ['Dodge', `${Math.round(s.dodge*100)}%`], ['Cooldown', `-${Math.round(s.cdr*100)}%`],
+    ['Ability power', `+${Math.round(s.abilityPower*100)}%`], ['Ability area', `+${Math.round(s.area*100)}%`],
+    ['Attack speed', `+${Math.round(s.attackSpeed*100)}%`], ['Block', `${Math.round(s.blockChance*100)}%`],
+    ['Loot luck', `+${Math.round(s.luck*100)}%`], ['Thorns', Math.round(s.thorns)],
+  ].map(([label,value]) => `<div class="char-stat"><span>${label}</span><b>${value}</b></div>`).join('')}</div>`;
 
   const bag = document.getElementById('bag'); bag.innerHTML = '';
   document.getElementById('bagCount').textContent = p.bag.length;
