@@ -6,7 +6,7 @@
 <title>SEEDSPIRE</title>
 <link rel="preload" as="image" href="assets/hd/seedspire-key-art.png" />
 <link rel="preload" as="image" href="assets/hd/character-atlas.png" />
-<link rel="preload" as="image" href="assets/hd/environment-atlas.png" />
+<link rel="preload" as="image" href="assets/hd/environment-atlas-v2.png" />
 <link rel="preload" as="image" href="assets/hd/icon-atlas.png" />
 <style>
   :root{
@@ -70,17 +70,20 @@
   #audioToggle{pointer-events:auto;cursor:pointer;color:var(--accent);border-color:var(--accent)}
 
   /* ---------- Inventory ---------- */
-  #inv{position:absolute;inset:0;z-index:40;background:rgba(6,8,12,.9);display:none;
-    padding:24px;overflow:auto}
+  #inv{position:absolute;inset:0;z-index:40;background:rgba(4,7,11,.94);display:none;
+    padding:clamp(14px,2.4vw,28px);overflow:auto}
   #inv.open{display:block}
-  .invwrap{max-width:900px;margin:0 auto;display:grid;grid-template-columns:1fr 1.3fr;gap:20px}
+  .invwrap{max-width:1100px;margin:0 auto;display:grid;grid-template-columns:minmax(330px,.86fr) minmax(0,1.4fr);gap:16px}
   .box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
   .box h3{margin:0 0 12px;font-size:12px;letter-spacing:.12em;color:var(--dim);text-transform:uppercase}
   .equip-slot{display:flex;align-items:center;gap:10px;padding:9px;border:1px solid var(--line);
     border-radius:9px;margin-bottom:8px;background:var(--panel2);cursor:pointer}
   .equip-slot .slotname{font-size:10px;color:var(--dim);width:64px;text-transform:uppercase}
   .equip-slot .iname{flex:1;font-size:13px}
-  .itemgrid{display:grid;grid-template-columns:1fr;gap:6px;max-height:52vh;overflow:auto}
+  .itemgrid{display:grid;grid-template-columns:1fr;gap:7px;max-height:calc(100vh - 176px);overflow:auto;align-content:start}
+  .itemgrid:empty::before{content:"YOUR BACKPACK IS EMPTY\A Slain enemies leave weapons, armor, and relics here.";white-space:pre-line;
+    min-height:240px;display:grid;place-items:center;text-align:center;color:#657183;font-size:10px;line-height:1.8;letter-spacing:.08em;
+    border:1px dashed rgba(151,175,187,.13);background:radial-gradient(circle,rgba(116,243,207,.035),transparent 58%)}
   .itemcard{padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);
     cursor:pointer;transition:border-color .12s}
   .itemcard:hover{border-color:var(--accent)}
@@ -94,10 +97,13 @@
     color:var(--ink);font-family:inherit;font-size:11px;cursor:pointer;transition:all .12s}
   .itemcard .ib.equip:hover{border-color:var(--accent);color:var(--accent)}
   .itemcard .ib.destroy:hover{border-color:var(--danger);color:var(--danger)}
-  .closebar{max-width:900px;margin:0 auto 14px;display:flex;justify-content:space-between;align-items:center}
+  .closebar{max-width:1100px;margin:0 auto 12px;display:flex;justify-content:space-between;align-items:center}
   .closebar h2{margin:0;letter-spacing:.14em;font-size:18px}
   .pill{font-size:11px;padding:5px 10px;border:1px solid var(--line);border-radius:20px;color:var(--dim);cursor:pointer}
   .pill:hover{color:var(--ink);border-color:var(--accent)}
+  .char-stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
+  .char-stat{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px solid rgba(151,175,187,.08);font-size:10px;line-height:1.3}
+  .char-stat span{color:#788496}.char-stat b{color:#dfe8e4;font-size:11px;font-weight:500}
   .authtab{opacity:.55} .authtab.active{opacity:1;border-color:var(--accent);color:var(--accent)}
   .modal{position:fixed;inset:0;z-index:70;display:none;align-items:center;justify-content:center;
     background:rgba(6,8,12,.82);backdrop-filter:blur(3px)}
@@ -147,35 +153,35 @@
   html,body{background:#05070b}
   body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:100;
     background:linear-gradient(rgba(255,255,255,.018) 1px,transparent 1px);background-size:100% 3px;
-    mix-blend-mode:soft-light;opacity:.06}
+    mix-blend-mode:soft-light;opacity:.025}
   #game{isolation:isolate;background:
     radial-gradient(circle at 50% 48%,rgba(36,53,69,.25),transparent 48%),
     linear-gradient(135deg,#070a10,#04060a)}
   #game::before{content:"";position:absolute;inset:10px;z-index:4;pointer-events:none;border:1px solid rgba(132,167,177,.12);
-    box-shadow:inset 0 0 70px rgba(0,0,0,.7),0 0 0 1px rgba(0,0,0,.8);clip-path:polygon(0 0,calc(100% - 18px) 0,100% 18px,100% 100%,18px 100%,0 calc(100% - 18px))}
+    box-shadow:inset 0 0 52px rgba(0,0,0,.44),0 0 0 1px rgba(0,0,0,.72);clip-path:polygon(0 0,calc(100% - 18px) 0,100% 18px,100% 100%,18px 100%,0 calc(100% - 18px))}
   #game::after{content:"SEEDBOUND  //  LIVE DESCENT";position:absolute;z-index:5;left:24px;top:74px;pointer-events:none;
     color:rgba(116,243,207,.22);font-size:8px;letter-spacing:.24em;writing-mode:vertical-rl}
   canvas{width:min(100vw,150vh);height:min(100vh,66.6667vw);max-width:none;max-height:none;object-fit:contain;
     image-rendering:auto;filter:none;box-shadow:0 0 100px rgba(0,0,0,.8)}
 
-  #hud{z-index:8;padding:18px 22px;gap:9px;background:linear-gradient(180deg,rgba(3,5,9,.68),transparent);}
+  #hud{z-index:8;padding:18px 22px;gap:9px;background:linear-gradient(180deg,rgba(3,5,9,.54),transparent);}
   .stat,.floorTag{position:relative;background:linear-gradient(180deg,rgba(17,23,32,.92),rgba(8,11,17,.88));
     border-color:rgba(143,174,184,.2);border-radius:4px;box-shadow:inset 0 1px rgba(255,255,255,.035),0 9px 22px rgba(0,0,0,.2)}
-  .stat{min-height:38px;padding:7px 11px;color:#dfe6e3;letter-spacing:.045em}
+  .stat{min-height:40px;padding:8px 12px;color:#edf3ef;letter-spacing:.045em;font-size:11px}
   .stat::after,.floorTag::after{content:"";position:absolute;left:0;bottom:-1px;width:16px;height:1px;background:var(--accent);opacity:.65}
   .bar{height:5px;width:160px;border-radius:0;background:#240d15;margin-top:6px}
   .bar>i{box-shadow:0 0 10px rgba(255,93,108,.45)}
   .bar.xp{background:#0b1d29}.bar.xp>i{box-shadow:0 0 10px rgba(111,227,196,.4)}
   #goldStat{color:var(--gold);display:flex;align-items:center}
-  #audioToggle{border-radius:4px;background:rgba(11,18,24,.88);font-size:10px;letter-spacing:.12em}
-  .floorTag{padding:10px 14px 8px 26px;border-radius:4px;font-size:11px;letter-spacing:.18em;color:var(--gold)}
+  #audioToggle{border-radius:4px;background:rgba(11,18,24,.88);font-size:11px;letter-spacing:.12em}
+  .floorTag{padding:11px 15px 9px 27px;border-radius:4px;font-size:12px;letter-spacing:.18em;color:var(--gold)}
   .floorTag::before{content:"DEPTH";position:absolute;left:9px;top:50%;transform:translateY(-50%) rotate(180deg);
     writing-mode:vertical-rl;font-size:6px;color:var(--dim);letter-spacing:.14em}
   #statusChips{z-index:8;top:69px;left:58px}
   #statusChips .chip{background:rgba(8,12,18,.9);border-radius:3px;box-shadow:0 7px 18px rgba(0,0,0,.25)}
   #abilities{z-index:8;bottom:20px;gap:8px;padding:7px;background:rgba(5,8,13,.7);border:1px solid rgba(151,175,187,.13);
     border-radius:5px;box-shadow:0 18px 40px rgba(0,0,0,.42)}
-  .slot{width:68px;height:68px;border-radius:3px;background:linear-gradient(145deg,rgba(24,31,43,.96),rgba(8,11,17,.96));
+  .slot{width:72px;height:72px;border-radius:3px;background:linear-gradient(145deg,rgba(24,31,43,.96),rgba(8,11,17,.96));
     border-color:var(--slot-color,var(--line))!important;box-shadow:inset 0 0 18px rgba(0,0,0,.32)}
   .slot::before{content:"✦";font-size:16px;color:var(--slot-color,var(--accent));opacity:.78;text-shadow:0 0 12px currentColor;margin-bottom:4px}
   .slot .k{top:4px;left:5px;padding:2px 4px;background:#05070b;border:1px solid rgba(255,255,255,.08);font-size:7px;letter-spacing:.06em;z-index:2}
@@ -187,11 +193,11 @@
   .slot::after{content:"";position:absolute;inset:4px;z-index:1;pointer-events:none;
     background:linear-gradient(180deg,transparent 44%,rgba(2,4,7,.93));border:1px solid rgba(255,255,255,.06)}
   .slot .k{z-index:3}
-  .slot .nm{font-size:7px;z-index:3;position:absolute;left:3px;right:3px;bottom:5px;text-shadow:0 1px 3px #000,0 0 5px #000}
+  .slot .nm{font-size:8px;z-index:3;position:absolute;left:3px;right:3px;bottom:5px;text-shadow:0 1px 3px #000,0 0 5px #000}
   .slot .cdfill{z-index:2}
-  #log{z-index:8;left:24px;bottom:33px;width:300px;padding-left:12px;border-left:1px solid rgba(116,243,207,.2);line-height:1.55}
+  #log{z-index:8;left:24px;bottom:33px;width:320px;padding-left:12px;border-left:1px solid rgba(116,243,207,.2);line-height:1.55;font-size:11px}
   #hint{z-index:8;right:24px;bottom:23px;padding:9px 11px;background:rgba(5,8,13,.64);border-right:1px solid rgba(116,243,207,.2);
-    color:#737e90;font-size:9px;letter-spacing:.02em}
+    color:#8d98a9;font-size:10px;letter-spacing:.02em}
 
   #menu{overflow:auto;align-items:stretch;padding:clamp(18px,4vh,44px);isolation:isolate;background:
     radial-gradient(circle at 18% 20%,rgba(66,152,139,.11),transparent 29%),
@@ -265,7 +271,7 @@
   @media (max-width:860px){
     #menu{padding:20px;align-items:flex-start}
     .menu-shell{grid-template-columns:1fr;gap:12px;width:min(560px,96vw)}
-    .invwrap{grid-template-columns:1fr}.itemgrid{max-height:none}
+    .invwrap{grid-template-columns:1fr}.itemgrid{max-height:none}.char-stat-grid{grid-template-columns:1fr 1fr}
     .menu-lore{padding:18px 0 8px}.menu-lore::before{display:none}
     .brand-lockup{margin:12px 0}.spire-mark{transform:scale(.78);transform-origin:left center;margin-right:-9px}
     .brand{font-size:clamp(39px,12vw,62px)}.lore-line{margin:12px 0 16px;line-height:1.55}
@@ -325,7 +331,7 @@
         <span class="pill" id="closeInv">Close ✕ (I)</span>
       </div>
     </div>
-    <div id="runEssence" style="max-width:900px;margin:0 auto 12px;font-size:12px;color:var(--dim)"></div>
+    <div id="runEssence" style="max-width:1100px;margin:0 auto 12px;font-size:11px;color:var(--dim)"></div>
     <div class="invwrap">
       <div class="box">
         <h3>Equipped</h3>
@@ -366,7 +372,7 @@
     <div class="card">
       <div class="panel-head">
         <div class="panel-kicker">Begin a descent</div>
-        <div class="build-tag">Build v6<br>Gameplay Expansion</div>
+        <div class="build-tag">Build v7<br>Visual Rebuild</div>
       </div>
 
     <!-- Account: logged out -->
@@ -445,6 +451,6 @@
 </div>
 
 <div id="tooltip"></div>
-<script type="module" src="game.js?v=14"></script>
+<script type="module" src="game.js?v=15"></script>
 </body>
 </html>
